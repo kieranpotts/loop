@@ -1,11 +1,13 @@
 // Executes a validated wish's `steps`.
 //
-// Scope for now: `type: script` steps only, run in dependency order. A wish
-// containing any `type: agent` step is refused up front, cleanly, rather than
-// run partially — agent execution (via `genie`, not the Claude Agent SDK
-// directly) is a later increment. So is `limits` enforcement: a real,
-// separable piece of work, not part of "can a DAG of scripts run and pass
-// data to each other, with progress written to state.path."
+// `type: script` steps run a shell command. `type: agent` steps run one
+// single-shot call to `genie` (https://github.com/kieranpotts/genie) — not
+// the Claude Agent SDK, and not multiple turns: `genie` has no session/resume
+// flag, so an agent step that declares `until`/`max_steps` (internal
+// iteration) is refused up front rather than silently run once. So is a step
+// that declares `tools`: genie bakes tool access into its own hardened image
+// at build time and has no per-invocation flag for it. `limits` (workflow-
+// wide turn/timeout/budget caps) is separate, real, deferred work.
 
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -34,6 +36,10 @@ interface StateDocument {
   run: { id: string, wish: string }
   steps: Record<string, StepState>
 }
+
+type StepResult =
+  | { ok: true, outputs: Record<string, unknown> }
+  | { ok: false, error: string }
 
 function isRecord (value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -70,11 +76,36 @@ function writeState (path: string, state: StateDocument): void {
   writeFileSync(path, stringify(state))
 }
 
-function runScriptStep (
+/** Parses `raw` as JSON and checks it against a step's declared `outputs`. */
+function parseAndValidateOutputs (
   id: string,
-  step: Step & { type: 'script' },
-  context: TemplateContext
-): { ok: true, outputs: Record<string, unknown> } | { ok: false, error: string } {
+  raw: string,
+  outputFields: Array<[string, OutputField]>,
+  sourceLabel: string
+): StepResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { ok: false, error: `step '${id}': ${sourceLabel} is not valid JSON (outputs are declared, so it must be a JSON object)` }
+  }
+  if (!isRecord(parsed)) {
+    return { ok: false, error: `step '${id}': ${sourceLabel} must be a JSON object` }
+  }
+
+  for (const [field, spec] of outputFields) {
+    if (!(field in parsed)) {
+      return { ok: false, error: `step '${id}': output '${field}' missing from ${sourceLabel}` }
+    }
+    if (!matchesOutputType(parsed[field], spec.type)) {
+      return { ok: false, error: `step '${id}': output '${field}' does not match declared type '${spec.type}'` }
+    }
+  }
+
+  return { ok: true, outputs: parsed }
+}
+
+function runScriptStep (id: string, step: Step & { type: 'script' }, context: TemplateContext): StepResult {
   let command: string
   try {
     command = substitute(step.run, context)
@@ -103,34 +134,119 @@ function runScriptStep (
     return { ok: true, outputs: {} }
   }
 
-  let parsed: unknown
+  return parseAndValidateOutputs(id, result.stdout, outputFields, 'stdout')
+}
+
+/** The instruction appended to a prompt when a step declares `outputs`. */
+function buildOutputInstruction (outputFields: Array<[string, OutputField]>): string {
+  const fields = outputFields.map(([field, spec]) => `- ${field}: ${spec.type}`).join('\n')
+  return `Respond with a single JSON object and no other text, with exactly these fields:\n${fields}`
+}
+
+interface GenieContentPart {
+  type: string
+  text?: string
+}
+
+interface GenieMessage {
+  role: string
+  content?: GenieContentPart[]
+}
+
+/**
+ * Pulls the final assistant reply out of `genie --json`'s output: one JSON
+ * event per line, of which only the last `message_end` with `role:
+ * "assistant"` is the answer. See genie's own README for this contract.
+ */
+function extractAssistantText (jsonl: string): { ok: true, text: string } | { ok: false, error: string } {
+  let lastMessage: GenieMessage | undefined
+
+  for (const line of jsonl.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    let event: unknown
+    try {
+      event = JSON.parse(trimmed)
+    } catch {
+      return { ok: false, error: 'received a non-JSON line from genie --json output' }
+    }
+
+    if (isRecord(event) && event.type === 'message_end' && isRecord(event.message) && event.message.role === 'assistant') {
+      lastMessage = event.message as unknown as GenieMessage
+    }
+  }
+
+  if (!lastMessage) {
+    return { ok: false, error: 'no assistant message_end event in genie --json output' }
+  }
+
+  const text = (lastMessage.content ?? [])
+    .filter((part): part is { type: 'text', text: string } => part.type === 'text' && typeof part.text === 'string')
+    .map(part => part.text)
+    .join('')
+
+  return { ok: true, text }
+}
+
+function runAgentStep (id: string, step: Step & { type: 'agent' }, context: TemplateContext): StepResult {
+  let prompt: string
   try {
-    parsed = JSON.parse(result.stdout)
-  } catch {
-    return { ok: false, error: `step '${id}': stdout is not valid JSON (outputs are declared, so stdout must be a JSON object)` }
-  }
-  if (!isRecord(parsed)) {
-    return { ok: false, error: `step '${id}': stdout must be a JSON object` }
+    prompt = substitute(step.prompt, context)
+  } catch (error) {
+    return { ok: false, error: `step '${id}': ${(error as Error).message}` }
   }
 
-  for (const [field, spec] of outputFields as Array<[string, OutputField]>) {
-    if (!(field in parsed)) {
-      return { ok: false, error: `step '${id}': output '${field}' missing from stdout` }
-    }
-    if (!matchesOutputType(parsed[field], spec.type)) {
-      return { ok: false, error: `step '${id}': output '${field}' does not match declared type '${spec.type}'` }
-    }
+  const outputFields = Object.entries(step.outputs ?? {})
+  const hasOutputs = outputFields.length > 0
+  const fullPrompt = hasOutputs ? `${prompt}\n\n${buildOutputInstruction(outputFields)}` : prompt
+
+  const args = ['-p', fullPrompt, '-m', step.model]
+  if (hasOutputs) args.push('--json')
+
+  const result = spawnSync('genie', args, {
+    encoding: 'utf8',
+    stdio: hasOutputs ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+  })
+
+  if (result.error) {
+    const notFound = (result.error as NodeJS.ErrnoException).code === 'ENOENT'
+    const detail = notFound
+      ? 'genie not found on PATH — install it from https://github.com/kieranpotts/genie'
+      : result.error.message
+    return { ok: false, error: `step '${id}': ${detail}` }
+  }
+  if (result.status !== 0) {
+    const detail = hasOutputs && result.stderr ? `: ${result.stderr.trim()}` : ''
+    return { ok: false, error: `step '${id}': genie exited with status ${result.status}${detail}` }
   }
 
-  return { ok: true, outputs: parsed }
+  if (!hasOutputs) {
+    return { ok: true, outputs: {} }
+  }
+
+  const extracted = extractAssistantText(result.stdout)
+  if (!extracted.ok) {
+    return { ok: false, error: `step '${id}': ${extracted.error}` }
+  }
+
+  return parseAndValidateOutputs(id, extracted.text, outputFields, "the agent's response")
 }
 
 export function runWish (wish: Wish): RunOutcome {
   for (const [id, step] of Object.entries(wish.steps)) {
-    if (step.type !== 'script') {
+    if (step.type !== 'agent') continue
+
+    if (step.until !== undefined || step.max_steps !== undefined) {
       return {
         ok: false,
-        error: `step '${id}': type '${step.type}' is not executable yet (only 'script' steps run in this build)`,
+        error: `step '${id}': 'until'/'max_steps' need internal iteration, which isn't implemented yet — agent steps currently run once`,
+      }
+    }
+    if (step.tools !== undefined && step.tools.length > 0) {
+      return {
+        ok: false,
+        error: `step '${id}': 'tools' isn't supported yet — genie doesn't expose per-invocation tool selection (tools come from its own hardened image)`,
       }
     }
   }
@@ -155,8 +271,10 @@ export function runWish (wish: Wish): RunOutcome {
   }
 
   for (const id of order) {
-    const step = wish.steps[id] as Step & { type: 'script' }
-    const result = runScriptStep(id, step, context)
+    const step = wish.steps[id] as Step
+    const result = step.type === 'script'
+      ? runScriptStep(id, step, context)
+      : runAgentStep(id, step, context)
 
     if (!result.ok) {
       if (state && statePath) {

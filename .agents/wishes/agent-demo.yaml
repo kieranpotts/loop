@@ -1,0 +1,8 @@
+wish: "1"
+name: agent-demo
+
+steps:
+  ask:
+    type: agent
+    model: computer-programmer
+    prompt: What does this project do in one sentence?

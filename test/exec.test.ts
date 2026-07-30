@@ -1,11 +1,66 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
 import { parse } from 'yaml'
 import { runWish } from '../src/exec.ts'
 import type { Wish } from '../src/schema.ts'
+
+/**
+ * Writes a fake `genie` executable to `dir`, shaped like the real CLI's
+ * documented contract: `-p`/`-m` flags, `--json` switching between plain text
+ * and one-JSON-event-per-line output, exit code and response controllable via
+ * env vars so each test can drive a different scenario.
+ */
+function writeFakeGenie (dir: string): void {
+  const script = `#!/usr/bin/env node
+const hasJson = process.argv.includes('--json')
+const exitCode = Number(process.env.FAKE_GENIE_EXIT_CODE ?? '0')
+const response = process.env.FAKE_GENIE_RESPONSE ?? 'ok'
+const firstResponse = process.env.FAKE_GENIE_RESPONSE_FIRST
+const stderrText = process.env.FAKE_GENIE_STDERR ?? ''
+
+if (stderrText) process.stderr.write(stderrText + '\\n')
+
+if (hasJson) {
+  const messageEnd = (text) => ({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text }] } })
+  const lines = [{ type: 'session' }, { type: 'turn_start' }]
+  if (firstResponse) lines.push(messageEnd(firstResponse))
+  lines.push(messageEnd(response), { type: 'agent_end' })
+  for (const line of lines) process.stdout.write(JSON.stringify(line) + '\\n')
+} else {
+  process.stdout.write(response)
+}
+
+process.exit(exitCode)
+`
+  const path = join(dir, 'genie')
+  writeFileSync(path, script)
+  chmodSync(path, 0o755)
+}
+
+/** Runs `fn` with `dir` prepended to PATH, restoring it afterwards. */
+function withPrependedPath<T> (dir: string, fn: () => T): T {
+  const original = process.env.PATH
+  process.env.PATH = `${dir}${delimiter}${original ?? ''}`
+  try {
+    return fn()
+  } finally {
+    process.env.PATH = original
+  }
+}
+
+/** Runs `fn` with PATH cleared, so no `genie` can possibly be found on it. */
+function withNoPath<T> (fn: () => T): T {
+  const original = process.env.PATH
+  process.env.PATH = ''
+  try {
+    return fn()
+  } finally {
+    process.env.PATH = original
+  }
+}
 
 describe('runWish', () => {
   it('runs steps in dependency order, threading output through templating', () => {
@@ -44,17 +99,6 @@ describe('runWish', () => {
       steps: { a: { type: 'script', run: 'echo hi' } },
     }
     assert.equal(runWish(wish).ok, true)
-  })
-
-  it('refuses to run a wish containing a type: agent step', () => {
-    const wish: Wish = {
-      wish: '1',
-      name: 't',
-      steps: { a: { type: 'agent', model: 'm', prompt: 'p' } },
-    }
-    const outcome = runWish(wish)
-    assert.equal(outcome.ok, false)
-    assert.ok(!outcome.ok && outcome.error.includes("step 'a': type 'agent' is not executable yet"))
   })
 
   it('reports a nonzero exit status', () => {
@@ -128,6 +172,165 @@ describe('runWish', () => {
     const outcome = runWish(wish)
     assert.equal(outcome.ok, false)
     assert.ok(!outcome.ok && outcome.error.includes('unresolved template reference'))
+  })
+})
+
+describe('runWish — agent steps', () => {
+  it('runs a single-shot agent step and captures declared outputs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p', outputs: { answer: { type: 'string' } } } },
+      }
+      const outcome = withPrependedPath(dir, () => {
+        process.env.FAKE_GENIE_RESPONSE = '{"answer":"42"}'
+        return runWish(wish)
+      })
+      assert.equal(outcome.ok, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('succeeds for an agent step with no declared outputs (response streams through)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p' } },
+      }
+      const outcome = withPrependedPath(dir, () => runWish(wish))
+      assert.equal(outcome.ok, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('extracts the LAST assistant message_end, not the first', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p', outputs: { answer: { type: 'string' } } } },
+      }
+      const outcome = withPrependedPath(dir, () => {
+        process.env.FAKE_GENIE_RESPONSE_FIRST = '{"answer":"wrong"}'
+        process.env.FAKE_GENIE_RESPONSE = '{"answer":"right"}'
+        return runWish(wish)
+      })
+      assert.equal(outcome.ok, true)
+    } finally {
+      delete process.env.FAKE_GENIE_RESPONSE_FIRST
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports genie\'s nonzero exit status', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p' } },
+      }
+      const outcome = withPrependedPath(dir, () => {
+        process.env.FAKE_GENIE_EXIT_CODE = '3'
+        return runWish(wish)
+      })
+      assert.equal(outcome.ok, false)
+      assert.ok(!outcome.ok && outcome.error.includes("step 'a': genie exited with status 3"))
+    } finally {
+      delete process.env.FAKE_GENIE_EXIT_CODE
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a response that does not match declared outputs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p', outputs: { answer: { type: 'string' } } } },
+      }
+      const outcome = withPrependedPath(dir, () => {
+        process.env.FAKE_GENIE_RESPONSE = 'not json'
+        return runWish(wish)
+      })
+      assert.equal(outcome.ok, false)
+      assert.ok(!outcome.ok && outcome.error.includes("the agent's response is not valid JSON"))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a clear error when genie is not on PATH', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p' } },
+    }
+    const outcome = withNoPath(() => runWish(wish))
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes('genie not found on PATH'))
+  })
+
+  it('refuses a step that declares until', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      steps: { a: { type: 'agent', model: 'm', prompt: 'p', until: '{{ steps.a.outputs.done }}' } },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes("'until'/'max_steps' need internal iteration"))
+  })
+
+  it('refuses a step that declares max_steps', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      steps: { a: { type: 'agent', model: 'm', prompt: 'p', max_steps: 5 } },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes("'until'/'max_steps' need internal iteration"))
+  })
+
+  it('refuses a step that declares non-empty tools', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      steps: { a: { type: 'agent', model: 'm', prompt: 'p', tools: ['shell'] } },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes("'tools' isn't supported yet"))
+  })
+
+  it('does not refuse a step that declares an empty tools list', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: { a: { type: 'agent', model: 'm', prompt: 'p', tools: [] } },
+      }
+      const outcome = withPrependedPath(dir, () => runWish(wish))
+      assert.equal(outcome.ok, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

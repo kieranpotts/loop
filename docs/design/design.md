@@ -93,12 +93,12 @@ tools:
 
 agents:
   - name: triager
-    model: claude-sonnet-5
+    model: technical-lead
     system_prompt: You diagnose failing test suites.
     tools: [shell]
     handoff: [fixer]
   - name: fixer
-    model: claude-sonnet-5
+    model: computer-programmer
     system_prompt: You fix bugs and re-run tests until green.
     tools: [shell]
 
@@ -212,6 +212,15 @@ hooks:
   there — kept separate so they can be swapped independently, per the
   "tools/model/identity as independent axes" requirement). `max_steps` and
   `until` bound the agent's *own* internal iteration on this one step.
+  Execution shells out to [`genie`](https://github.com/kieranpotts/genie), not
+  the Claude Agent SDK — which means `model:` is one of *its* fixed roles
+  (`computer-programmer`, `technical-lead`, `technical-writer`,
+  `security-analyst`), not an arbitrary model ID, and `tools:` has no home in
+  genie's per-invocation CLI at all (tool access is baked into its hardened
+  image at build time). The first implementation only runs a single genie
+  call per step — `until`/`max_steps` need genie session continuity that
+  doesn't exist, so a step declaring either is refused rather than silently
+  run once.
 - **`type: script`** — a deterministic step: a shell command (or HTTP call,
   or any non-LLM action) whose stdout is parsed against `outputs`. Cf.
   Taskflow's `run:` field.
@@ -356,7 +365,7 @@ steps:
   implement:
     needs: [test]
     type: agent
-    model: claude-sonnet-5
+    model: computer-programmer
     tools: [shell]
     prompt: "Fix the failures: {{ steps.test.outputs.failures }}"
     max_steps: 20

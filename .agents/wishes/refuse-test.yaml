@@ -1,0 +1,9 @@
+wish: "1"
+name: refuse-test
+steps:
+  a:
+    type: agent
+    model: computer-programmer
+    prompt: hi
+    max_steps: 5
+    until: "{{ steps.a.outputs.done }}"
