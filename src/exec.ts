@@ -6,8 +6,12 @@
 // flag, so an agent step that declares `until`/`max_steps` (internal
 // iteration) is refused up front rather than silently run once. So is a step
 // that declares `tools`: genie bakes tool access into its own hardened image
-// at build time and has no per-invocation flag for it. `limits` (workflow-
-// wide turn/timeout/budget caps) is separate, real, deferred work.
+// at build time and has no per-invocation flag for it.
+//
+// `limits.max_turns` and `limits.timeout` are enforced (see runWish below).
+// `limits.budget_usd` is not: cost tracking needs token usage pulled out of
+// genie's `--json` stream plus a per-role pricing table, real separable work
+// deferred for now.
 
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -17,6 +21,7 @@ import { stringify } from 'yaml'
 import type { OutputField, Step, Wish } from './schema.ts'
 import { matchesOutputType } from './schema.ts'
 import { topologicalOrder } from './dag.ts'
+import { parseDuration } from './duration.ts'
 
 export type RunOutcome =
   | { ok: true, statePath?: string }
@@ -105,7 +110,12 @@ function parseAndValidateOutputs (
   return { ok: true, outputs: parsed }
 }
 
-function runScriptStep (id: string, step: Step & { type: 'script' }, context: TemplateContext): StepResult {
+function runScriptStep (
+  id: string,
+  step: Step & { type: 'script' },
+  context: TemplateContext,
+  timeoutMs?: number
+): StepResult {
   let command: string
   try {
     command = substitute(step.run, context)
@@ -120,10 +130,13 @@ function runScriptStep (id: string, step: Step & { type: 'script' }, context: Te
     shell: true,
     encoding: 'utf8',
     stdio: hasOutputs ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    timeout: timeoutMs,
   })
 
   if (result.error) {
-    return { ok: false, error: `step '${id}': ${result.error.message}` }
+    const timedOut = (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
+    const detail = timedOut ? `timed out after ${timeoutMs}ms (limits.timeout)` : result.error.message
+    return { ok: false, error: `step '${id}': ${detail}` }
   }
   if (result.status !== 0) {
     const detail = hasOutputs && result.stderr ? `: ${result.stderr.trim()}` : ''
@@ -189,7 +202,12 @@ function extractAssistantText (jsonl: string): { ok: true, text: string } | { ok
   return { ok: true, text }
 }
 
-function runAgentStep (id: string, step: Step & { type: 'agent' }, context: TemplateContext): StepResult {
+function runAgentStep (
+  id: string,
+  step: Step & { type: 'agent' },
+  context: TemplateContext,
+  timeoutMs?: number
+): StepResult {
   let prompt: string
   try {
     prompt = substitute(step.prompt, context)
@@ -207,13 +225,16 @@ function runAgentStep (id: string, step: Step & { type: 'agent' }, context: Temp
   const result = spawnSync('genie', args, {
     encoding: 'utf8',
     stdio: hasOutputs ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    timeout: timeoutMs,
   })
 
   if (result.error) {
-    const notFound = (result.error as NodeJS.ErrnoException).code === 'ENOENT'
-    const detail = notFound
+    const errno = result.error as NodeJS.ErrnoException
+    const detail = errno.code === 'ENOENT'
       ? 'genie not found on PATH — install it from https://github.com/kieranpotts/genie'
-      : result.error.message
+      : errno.code === 'ETIMEDOUT'
+        ? `timed out after ${timeoutMs}ms (limits.timeout)`
+        : result.error.message
     return { ok: false, error: `step '${id}': ${detail}` }
   }
   if (result.status !== 0) {
@@ -270,11 +291,35 @@ export function runWish (wish: Wish): RunOutcome {
     writeState(statePath, state)
   }
 
+  // `parseDuration` cannot fail here — validateWish already rejected any
+  // `limits.timeout` it doesn't accept — but the return type stays nullable
+  // since that guarantee lives in a different function. `?? undefined`
+  // treats the (unreachable) failure case as "no timeout" rather than 0ms.
+  const maxTurns = wish.limits?.max_turns
+  const timeoutMs = wish.limits?.timeout ? (parseDuration(wish.limits.timeout) ?? undefined) : undefined
+  const startTime = Date.now()
+
+  let turns = 0
+
   for (const id of order) {
+    turns++
+    if (maxTurns !== undefined && turns > maxTurns) {
+      return { ok: false, error: `limits.max_turns (${maxTurns}) reached before step '${id}' could run` }
+    }
+
+    let stepTimeoutMs: number | undefined
+    if (timeoutMs !== undefined) {
+      const remaining = timeoutMs - (Date.now() - startTime)
+      if (remaining <= 0) {
+        return { ok: false, error: `limits.timeout (${wish.limits!.timeout}) reached before step '${id}' could run` }
+      }
+      stepTimeoutMs = remaining
+    }
+
     const step = wish.steps[id] as Step
     const result = step.type === 'script'
-      ? runScriptStep(id, step, context)
-      : runAgentStep(id, step, context)
+      ? runScriptStep(id, step, context, stepTimeoutMs)
+      : runAgentStep(id, step, context, stepTimeoutMs)
 
     if (!result.ok) {
       if (state && statePath) {

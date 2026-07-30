@@ -7,6 +7,7 @@
 // until those increments land.
 
 import { findCycle } from './dag.ts'
+import { parseDuration } from './duration.ts'
 
 export type StepType = 'agent' | 'script'
 
@@ -170,8 +171,8 @@ export function validateWish (value: unknown): ValidationResult {
       if (maxTurns !== undefined && !isPositiveInteger(maxTurns)) {
         errors.push('limits.max_turns: must be a positive integer')
       }
-      if (timeout !== undefined && !isNonEmptyString(timeout)) {
-        errors.push('limits.timeout: must be a duration string, e.g. "45m"')
+      if (timeout !== undefined && (!isNonEmptyString(timeout) || parseDuration(timeout) === null)) {
+        errors.push('limits.timeout: must be a duration string, e.g. "45m" (units: ms, s, m, h)')
       }
       if (budgetUsd !== undefined && !(typeof budgetUsd === 'number' && budgetUsd >= 0)) {
         errors.push('limits.budget_usd: must be a non-negative number')

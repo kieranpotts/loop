@@ -20,6 +20,11 @@ const exitCode = Number(process.env.FAKE_GENIE_EXIT_CODE ?? '0')
 const response = process.env.FAKE_GENIE_RESPONSE ?? 'ok'
 const firstResponse = process.env.FAKE_GENIE_RESPONSE_FIRST
 const stderrText = process.env.FAKE_GENIE_STDERR ?? ''
+const delayMs = Number(process.env.FAKE_GENIE_DELAY_MS ?? '0')
+
+if (delayMs > 0) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs)
+}
 
 if (stderrText) process.stderr.write(stderrText + '\\n')
 
@@ -437,5 +442,95 @@ describe('runWish — state persistence', () => {
     const outcome = runWish(wish)
     assert.equal(outcome.ok, false)
     assert.ok(!outcome.ok && outcome.error.includes('unresolved template reference'))
+  })
+})
+
+describe('runWish — limits', () => {
+  it('stops after limits.max_turns steps, leaving the rest pending', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-limits-'))
+    try {
+      const statePath = join(dir, 'state.yaml')
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        limits: { max_turns: 2 },
+        state: { path: statePath },
+        steps: {
+          a: { type: 'script', run: 'echo a' },
+          b: { needs: ['a'], type: 'script', run: 'echo b' },
+          c: { needs: ['b'], type: 'script', run: 'echo c' },
+        },
+      }
+
+      const outcome = runWish(wish)
+      assert.equal(outcome.ok, false)
+      assert.ok(!outcome.ok && outcome.error.includes("limits.max_turns (2) reached before step 'c' could run"))
+
+      const state = parse(readFileSync(statePath, 'utf8'))
+      assert.equal(state.steps.a.status, 'success')
+      assert.equal(state.steps.b.status, 'success')
+      assert.deepEqual(state.steps.c, { status: 'pending' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('runs normally when max_turns is not exceeded', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      limits: { max_turns: 10 },
+      steps: { a: { type: 'script', run: 'echo hi' } },
+    }
+    assert.equal(runWish(wish).ok, true)
+  })
+
+  it('kills a script step that exceeds limits.timeout', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      limits: { timeout: '150ms' },
+      steps: { a: { type: 'script', run: 'sleep 2' } },
+    }
+    const start = Date.now()
+    const outcome = runWish(wish)
+    const elapsed = Date.now() - start
+
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes("step 'a': timed out after"))
+    assert.ok(!outcome.ok && outcome.error.includes('limits.timeout'))
+    assert.ok(elapsed < 1000, `expected the step to be killed well before 2s, took ${elapsed}ms`)
+  })
+
+  it('kills an agent step that exceeds limits.timeout', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-'))
+    try {
+      writeFakeGenie(dir)
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        limits: { timeout: '150ms' },
+        steps: { a: { type: 'agent', model: 'computer-programmer', prompt: 'p' } },
+      }
+      const outcome = withPrependedPath(dir, () => {
+        process.env.FAKE_GENIE_DELAY_MS = '2000'
+        return runWish(wish)
+      })
+      assert.equal(outcome.ok, false)
+      assert.ok(!outcome.ok && outcome.error.includes("step 'a': timed out after"))
+    } finally {
+      delete process.env.FAKE_GENIE_DELAY_MS
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('runs normally when timeout is not exceeded', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      limits: { timeout: '30s' },
+      steps: { a: { type: 'script', run: 'echo hi' } },
+    }
+    assert.equal(runWish(wish).ok, true)
   })
 })

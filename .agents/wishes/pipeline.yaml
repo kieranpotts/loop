@@ -1,6 +1,10 @@
 wish: "1"
 name: pipeline
 
+limits:
+  max_turns: 10
+  timeout: 30s
+
 state:
   path: .loop/runs/{{ run.id }}/state.yaml
 
