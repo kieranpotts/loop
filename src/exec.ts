@@ -131,11 +131,16 @@ function runScriptStep (
     encoding: 'utf8',
     stdio: hasOutputs ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     timeout: timeoutMs,
+    maxBuffer: 64 * 1024 * 1024,
   })
 
   if (result.error) {
-    const timedOut = (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
-    const detail = timedOut ? `timed out after ${timeoutMs}ms (limits.timeout)` : result.error.message
+    const errno = result.error as NodeJS.ErrnoException
+    const detail = errno.code === 'ETIMEDOUT'
+      ? `timed out after ${timeoutMs}ms (limits.timeout)`
+      : errno.code === 'ENOBUFS'
+        ? 'the command produced more output than the buffer allows'
+        : result.error.message
     return { ok: false, error: `step '${id}': ${detail}` }
   }
   if (result.status !== 0) {
@@ -226,6 +231,11 @@ function runAgentStep (
     encoding: 'utf8',
     stdio: hasOutputs ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     timeout: timeoutMs,
+    // genie's `--json` stream emits one event per incremental token delta
+    // (including "thinking" content), so it dwarfs Node's default 1MB
+    // spawnSync buffer on anything past a trivial prompt — confirmed by
+    // actually hitting ENOBUFS against a real genie invocation.
+    maxBuffer: 64 * 1024 * 1024,
   })
 
   if (result.error) {
@@ -234,7 +244,9 @@ function runAgentStep (
       ? 'genie not found on PATH — install it from https://github.com/kieranpotts/genie'
       : errno.code === 'ETIMEDOUT'
         ? `timed out after ${timeoutMs}ms (limits.timeout)`
-        : result.error.message
+        : errno.code === 'ENOBUFS'
+          ? 'genie produced more output than the buffer allows'
+          : result.error.message
     return { ok: false, error: `step '${id}': ${detail}` }
   }
   if (result.status !== 0) {
