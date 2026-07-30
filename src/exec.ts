@@ -1,14 +1,14 @@
-// Executes a validated wish's `jobs`.
+// Executes a validated wish's `steps`.
 //
-// Scope for now: `type: script` jobs only, run in dependency order. A wish
-// containing any `type: agent` job is refused up front, cleanly, rather than
+// Scope for now: `type: script` steps only, run in dependency order. A wish
+// containing any `type: agent` step is refused up front, cleanly, rather than
 // run partially — agent execution (via `genie`, not the Claude Agent SDK
 // directly) is a later increment. So is `state.path` persistence and
 // `limits` enforcement: both are real, separable pieces of work, not part
 // of "can a DAG of scripts run and pass data to each other."
 
 import { spawnSync } from 'node:child_process'
-import type { Job, OutputField, Wish } from './schema.ts'
+import type { OutputField, Step, Wish } from './schema.ts'
 import { matchesOutputType } from './schema.ts'
 import { topologicalOrder } from './dag.ts'
 
@@ -17,7 +17,7 @@ export type RunOutcome =
   | { ok: false, error: string }
 
 interface TemplateContext {
-  jobs: Record<string, { outputs: Record<string, unknown> }>
+  steps: Record<string, { outputs: Record<string, unknown> }>
 }
 
 function isRecord (value: unknown): value is Record<string, unknown> {
@@ -50,19 +50,19 @@ function substitute (text: string, context: TemplateContext): string {
   })
 }
 
-function runScriptJob (
+function runScriptStep (
   id: string,
-  job: Job & { type: 'script' },
+  step: Step & { type: 'script' },
   context: TemplateContext
 ): { ok: true, outputs: Record<string, unknown> } | { ok: false, error: string } {
   let command: string
   try {
-    command = substitute(job.run, context)
+    command = substitute(step.run, context)
   } catch (error) {
-    return { ok: false, error: `job '${id}': ${(error as Error).message}` }
+    return { ok: false, error: `step '${id}': ${(error as Error).message}` }
   }
 
-  const outputFields = Object.entries(job.outputs ?? {})
+  const outputFields = Object.entries(step.outputs ?? {})
   const hasOutputs = outputFields.length > 0
 
   const result = spawnSync(command, {
@@ -72,11 +72,11 @@ function runScriptJob (
   })
 
   if (result.error) {
-    return { ok: false, error: `job '${id}': ${result.error.message}` }
+    return { ok: false, error: `step '${id}': ${result.error.message}` }
   }
   if (result.status !== 0) {
     const detail = hasOutputs && result.stderr ? `: ${result.stderr.trim()}` : ''
-    return { ok: false, error: `job '${id}': command exited with status ${result.status}${detail}` }
+    return { ok: false, error: `step '${id}': command exited with status ${result.status}${detail}` }
   }
 
   if (!hasOutputs) {
@@ -87,18 +87,18 @@ function runScriptJob (
   try {
     parsed = JSON.parse(result.stdout)
   } catch {
-    return { ok: false, error: `job '${id}': stdout is not valid JSON (outputs are declared, so stdout must be a JSON object)` }
+    return { ok: false, error: `step '${id}': stdout is not valid JSON (outputs are declared, so stdout must be a JSON object)` }
   }
   if (!isRecord(parsed)) {
-    return { ok: false, error: `job '${id}': stdout must be a JSON object` }
+    return { ok: false, error: `step '${id}': stdout must be a JSON object` }
   }
 
   for (const [field, spec] of outputFields as Array<[string, OutputField]>) {
     if (!(field in parsed)) {
-      return { ok: false, error: `job '${id}': output '${field}' missing from stdout` }
+      return { ok: false, error: `step '${id}': output '${field}' missing from stdout` }
     }
     if (!matchesOutputType(parsed[field], spec.type)) {
-      return { ok: false, error: `job '${id}': output '${field}' does not match declared type '${spec.type}'` }
+      return { ok: false, error: `step '${id}': output '${field}' does not match declared type '${spec.type}'` }
     }
   }
 
@@ -106,23 +106,23 @@ function runScriptJob (
 }
 
 export function runWish (wish: Wish): RunOutcome {
-  for (const [id, job] of Object.entries(wish.jobs)) {
-    if (job.type !== 'script') {
+  for (const [id, step] of Object.entries(wish.steps)) {
+    if (step.type !== 'script') {
       return {
         ok: false,
-        error: `job '${id}': type '${job.type}' is not executable yet (only 'script' jobs run in this build)`,
+        error: `step '${id}': type '${step.type}' is not executable yet (only 'script' steps run in this build)`,
       }
     }
   }
 
-  const order = topologicalOrder(wish.jobs)
-  const context: TemplateContext = { jobs: {} }
+  const order = topologicalOrder(wish.steps)
+  const context: TemplateContext = { steps: {} }
 
   for (const id of order) {
-    const job = wish.jobs[id] as Job & { type: 'script' }
-    const result = runScriptJob(id, job, context)
+    const step = wish.steps[id] as Step & { type: 'script' }
+    const result = runScriptStep(id, step, context)
     if (!result.ok) return result
-    context.jobs[id] = { outputs: result.outputs }
+    context.steps[id] = { outputs: result.outputs }
   }
 
   return { ok: true }

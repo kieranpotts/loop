@@ -29,7 +29,7 @@ describe('topologicalOrder', () => {
     assert.deepEqual(order, ['a', 'm', 'z'])
   })
 
-  it('includes every job exactly once', () => {
+  it('includes every step exactly once', () => {
     const order = topologicalOrder({
       a: {}, b: { needs: ['a'] }, c: { needs: ['a'] },
     })
@@ -42,7 +42,7 @@ describe('findCycle', () => {
     assert.equal(findCycle({ a: {}, b: { needs: ['a'] } }), null)
   })
 
-  it('finds a two-job cycle', () => {
+  it('finds a two-step cycle', () => {
     const cycle = findCycle({ a: { needs: ['b'] }, b: { needs: ['a'] } })
     assert.deepEqual(cycle, ['a', 'b', 'a'])
   })
@@ -56,7 +56,7 @@ describe('findCycle', () => {
     assert.deepEqual(cycle, ['a', 'b', 'c', 'a'])
   })
 
-  it('ignores a needs entry that names a job outside the graph', () => {
+  it('ignores a needs entry that names a step outside the graph', () => {
     assert.equal(findCycle({ a: { needs: ['missing'] } }), null)
   })
 })

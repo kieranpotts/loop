@@ -1,7 +1,7 @@
 loop: "1"
 name: hello
 
-jobs:
+steps:
   greet:
     type: script
     run: echo "hello from a wish"

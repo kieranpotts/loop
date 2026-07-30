@@ -7,18 +7,18 @@ import { runWish } from '../src/exec.ts'
 import type { Wish } from '../src/schema.ts'
 
 describe('runWish', () => {
-  it('runs jobs in dependency order, threading output through templating', () => {
+  it('runs steps in dependency order, threading output through templating', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wish-exec-'))
     const file = join(dir, 'out.txt')
     try {
       const wish: Wish = {
         loop: '1',
         name: 't',
-        jobs: {
+        steps: {
           consume: {
             needs: ['produce'],
             type: 'script',
-            run: `printf '%s' '{{ jobs.produce.outputs.message }}' > ${file}`,
+            run: `printf '%s' '{{ steps.produce.outputs.message }}' > ${file}`,
           },
           produce: {
             type: 'script',
@@ -36,42 +36,42 @@ describe('runWish', () => {
     }
   })
 
-  it('succeeds for a job with no declared outputs (stdout streams through)', () => {
+  it('succeeds for a step with no declared outputs (stdout streams through)', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: { a: { type: 'script', run: 'echo hi' } },
+      steps: { a: { type: 'script', run: 'echo hi' } },
     }
     assert.equal(runWish(wish).ok, true)
   })
 
-  it('refuses to run a wish containing a type: agent job', () => {
+  it('refuses to run a wish containing a type: agent step', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: { a: { type: 'agent', model: 'm', prompt: 'p' } },
+      steps: { a: { type: 'agent', model: 'm', prompt: 'p' } },
     }
     const outcome = runWish(wish)
     assert.equal(outcome.ok, false)
-    assert.ok(!outcome.ok && outcome.error.includes("job 'a': type 'agent' is not executable yet"))
+    assert.ok(!outcome.ok && outcome.error.includes("step 'a': type 'agent' is not executable yet"))
   })
 
   it('reports a nonzero exit status', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: { a: { type: 'script', run: 'exit 7' } },
+      steps: { a: { type: 'script', run: 'exit 7' } },
     }
     const outcome = runWish(wish)
     assert.equal(outcome.ok, false)
-    assert.ok(!outcome.ok && outcome.error.includes("job 'a': command exited with status 7"))
+    assert.ok(!outcome.ok && outcome.error.includes("step 'a': command exited with status 7"))
   })
 
   it('rejects non-JSON stdout when outputs are declared', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: {
+      steps: {
         a: {
           type: 'script',
           run: 'echo not-json',
@@ -88,7 +88,7 @@ describe('runWish', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: {
+      steps: {
         a: {
           type: 'script',
           run: 'echo \'{"other":1}\'',
@@ -105,7 +105,7 @@ describe('runWish', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: {
+      steps: {
         a: {
           type: 'script',
           run: 'echo \'{"x":123}\'',
@@ -122,7 +122,7 @@ describe('runWish', () => {
     const wish: Wish = {
       loop: '1',
       name: 't',
-      jobs: { a: { type: 'script', run: 'echo {{ jobs.missing.outputs.x }}' } },
+      steps: { a: { type: 'script', run: 'echo {{ steps.missing.outputs.x }}' } },
     }
     const outcome = runWish(wish)
     assert.equal(outcome.ok, false)

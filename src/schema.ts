@@ -1,5 +1,5 @@
 // Validates a parsed wish against the MVP field set from
-// docs/design/design.md's "Minimal MVP increment": `loop`/`name`, `jobs`
+// docs/design/design.md's "Minimal MVP increment": `loop`/`name`, `steps`
 // with `needs`/`type: agent | script`/`outputs`, `max_steps`/`until`,
 // workflow-wide `limits`, and `state.path`. Everything else the full schema
 // proposes (`if`, `human_gate`, `strategy.matrix`, `retry`, agent/tool
@@ -8,20 +8,20 @@
 
 import { findCycle } from './dag.ts'
 
-export type JobType = 'agent' | 'script'
+export type StepType = 'agent' | 'script'
 
 export interface OutputField {
   type: 'string' | 'number' | 'boolean' | 'array' | 'object'
 }
 
-interface JobBase {
+interface StepBase {
   needs?: string[]
   outputs?: Record<string, OutputField>
 }
 
-export type Job =
-  | (JobBase & { type: 'script', run: string })
-  | (JobBase & {
+export type Step =
+  | (StepBase & { type: 'script', run: string })
+  | (StepBase & {
     type: 'agent'
     model: string
     prompt: string
@@ -45,14 +45,14 @@ export interface Wish {
   name: string
   limits?: Limits
   state?: State
-  jobs: Record<string, Job>
+  steps: Record<string, Step>
 }
 
 export type ValidationResult =
   | { ok: true, errors: [], wish: Wish }
   | { ok: false, errors: string[] }
 
-const JOB_TYPES = ['agent', 'script'] as const
+const STEP_TYPES = ['agent', 'script'] as const
 const OUTPUT_TYPES = ['string', 'number', 'boolean', 'array', 'object'] as const
 
 function isRecord (value: unknown): value is Record<string, unknown> {
@@ -102,8 +102,8 @@ function validateOutputs (value: unknown, path: string, errors: string[]): void 
   }
 }
 
-function validateJob (value: unknown, id: string, jobIds: Set<string>, errors: string[]): void {
-  const path = `jobs.${id}`
+function validateStep (value: unknown, id: string, stepIds: Set<string>, errors: string[]): void {
+  const path = `steps.${id}`
 
   if (!isRecord(value)) {
     errors.push(`${path}: must be an object`)
@@ -112,23 +112,23 @@ function validateJob (value: unknown, id: string, jobIds: Set<string>, errors: s
 
   if (value.needs !== undefined) {
     if (!isStringArray(value.needs)) {
-      errors.push(`${path}.needs: must be an array of job names`)
+      errors.push(`${path}.needs: must be an array of step names`)
     } else {
       for (const dep of value.needs) {
-        if (!jobIds.has(dep)) errors.push(`${path}.needs: references unknown job '${dep}'`)
+        if (!stepIds.has(dep)) errors.push(`${path}.needs: references unknown step '${dep}'`)
       }
     }
   }
 
   const type = value.type
-  if (!isNonEmptyString(type) || !(JOB_TYPES as readonly string[]).includes(type)) {
+  if (!isNonEmptyString(type) || !(STEP_TYPES as readonly string[]).includes(type)) {
     errors.push(`${path}.type: must be 'agent' or 'script'`)
     return
   }
 
   if (type === 'agent') {
-    if (!isNonEmptyString(value.model)) errors.push(`${path}.model: required for an agent job`)
-    if (!isNonEmptyString(value.prompt)) errors.push(`${path}.prompt: required for an agent job`)
+    if (!isNonEmptyString(value.model)) errors.push(`${path}.model: required for an agent step`)
+    if (!isNonEmptyString(value.prompt)) errors.push(`${path}.prompt: required for an agent step`)
     if (value.tools !== undefined && !isStringArray(value.tools)) {
       errors.push(`${path}.tools: must be an array of tool names`)
     }
@@ -138,11 +138,11 @@ function validateJob (value: unknown, id: string, jobIds: Set<string>, errors: s
     if (value.until !== undefined && !isNonEmptyString(value.until)) {
       errors.push(`${path}.until: must be a non-empty string`)
     }
-    if (value.run !== undefined) errors.push(`${path}.run: not valid on an agent job`)
+    if (value.run !== undefined) errors.push(`${path}.run: not valid on an agent step`)
   } else {
-    if (!isNonEmptyString(value.run)) errors.push(`${path}.run: required for a script job`)
+    if (!isNonEmptyString(value.run)) errors.push(`${path}.run: required for a script step`)
     for (const field of ['model', 'prompt', 'tools', 'max_steps', 'until'] as const) {
-      if (value[field] !== undefined) errors.push(`${path}.${field}: not valid on a script job`)
+      if (value[field] !== undefined) errors.push(`${path}.${field}: not valid on a script step`)
     }
   }
 
@@ -182,18 +182,18 @@ export function validateWish (value: unknown): ValidationResult {
     }
   }
 
-  if (!isRecord(value.jobs) || Object.keys(value.jobs).length === 0) {
-    errors.push('jobs: required, must be a non-empty object')
+  if (!isRecord(value.steps) || Object.keys(value.steps).length === 0) {
+    errors.push('steps: required, must be a non-empty object')
   } else {
-    const jobs = value.jobs
-    const jobIds = new Set(Object.keys(jobs))
+    const steps = value.steps
+    const stepIds = new Set(Object.keys(steps))
 
-    for (const id of jobIds) {
-      validateJob(jobs[id], id, jobIds, errors)
+    for (const id of stepIds) {
+      validateStep(steps[id], id, stepIds, errors)
     }
 
-    const cycle = findCycle(jobs as Record<string, { needs?: string[] }>)
-    if (cycle) errors.push(`jobs: cyclic 'needs' dependency: ${cycle.join(' -> ')}`)
+    const cycle = findCycle(steps as Record<string, { needs?: string[] }>)
+    if (cycle) errors.push(`steps: cyclic 'needs' dependency: ${cycle.join(' -> ')}`)
   }
 
   if (errors.length > 0) return { ok: false, errors }

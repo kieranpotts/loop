@@ -1,7 +1,7 @@
 loop: "1"
 name: pipeline
 
-jobs:
+steps:
   greet:
     type: script
     run: echo '{"message":"hello from a wish"}'
@@ -11,4 +11,4 @@ jobs:
   echo_it:
     needs: [greet]
     type: script
-    run: 'echo "greet said: {{ jobs.greet.outputs.message }}"'
+    run: 'echo "greet said: {{ steps.greet.outputs.message }}"'

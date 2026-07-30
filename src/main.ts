@@ -4,7 +4,7 @@
 //
 // Wishes are YAML files stored at .agents/wishes/<name>.yaml, relative to the
 // current working directory. `wish <name>` resolves, validates, and runs
-// that file. Only `type: script` jobs execute so far — see exec.ts.
+// that file. Only `type: script` steps execute so far — see exec.ts.
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'

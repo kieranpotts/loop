@@ -10,12 +10,12 @@ a committed spec.
 requirements.md ended with three open questions. This schema answers them,
 because a concrete design has to commit to something:
 
-- **Composability**: yes. A job can delegate to another workflow file via
+- **Composability**: yes. A step can delegate to another workflow file via
   `uses:`, mirroring Open Agent Spec's `spec:`/`task:` delegation, Conductor's
   `type: workflow`, and GitHub Actions' reusable workflows.
 
 - **State tracking**: both, reconciled into one mechanism. The run-state file
-  (`state.path`) is a plain YAML document of named job outputs — machine-
+  (`state.path`) is a plain YAML document of named step outputs — machine-
   readable like Open Agent Spec/Conductor's model — but it's also just a
   file on disk a human can open and read mid-run, which is the property
   `ohitslaurence/agent-loop`'s plan file has that a session store doesn't.
@@ -33,21 +33,21 @@ because a concrete design has to commit to something:
 
 | Requirement | Schema construct |
 |---|---|
-| YAML DAG | `jobs.<id>.needs` (acyclic; see rationale below) |
-| Human gates | `jobs.<id>.type: human_gate` |
-| Parallel branches | `jobs.<id>.strategy.matrix` (also covers per-item iteration) |
-| Mix of agentic/deterministic steps | `jobs.<id>.type: agent \| script \| human_gate \| workflow` |
-| Agent handoffs | `agents[].handoff`, referenced from within an agentic job |
-| Stop conditions, iteration limits | `limits:` (workflow), `jobs.<id>.retry` (cycle), `jobs.<id>.max_steps`/`until` (single-job) |
+| YAML DAG | `steps.<id>.needs` (acyclic; see rationale below) |
+| Human gates | `steps.<id>.type: human_gate` |
+| Parallel branches | `steps.<id>.strategy.matrix` (also covers per-item iteration) |
+| Mix of agentic/deterministic steps | `steps.<id>.type: agent \| script \| human_gate \| workflow` |
+| Agent handoffs | `agents[].handoff`, referenced from within an agentic step |
+| Stop conditions, iteration limits | `limits:` (workflow), `steps.<id>.retry` (cycle), `steps.<id>.max_steps`/`until` (single-step) |
 | State and progress tracking | `state.path` — resumable, human-readable run-state file |
 | Session transcripts | `transcripts:` |
-| Typed, addressable step outputs | `jobs.<id>.outputs` schema, referenced as `{{ jobs.<id>.outputs.field }}` |
-| Tools/model/identity as independent axes | `tools:`, `agents:` registries, referenced separately from a job |
-| Conditional/deterministic routing | `jobs.<id>.if` |
+| Typed, addressable step outputs | `steps.<id>.outputs` schema, referenced as `{{ steps.<id>.outputs.field }}` |
+| Tools/model/identity as independent axes | `tools:`, `agents:` registries, referenced separately from a step |
+| Conditional/deterministic routing | `steps.<id>.if` |
 | Three iteration semantics | `strategy.matrix` / `retry.rerun` / `max_steps`+`until` (see below) |
 | Resource caps beyond iteration count | `limits.timeout`, `limits.budget_usd` |
-| Retry policy separate from stop conditions | `jobs.<id>.retry` |
-| Composable/reusable workflows | `jobs.<id>.uses` + `with` |
+| Retry policy separate from stop conditions | `steps.<id>.retry` |
+| Composable/reusable workflows | `steps.<id>.uses` + `with` |
 | Context propagation mode | `context.mode` |
 | Observability hooks | `hooks:` |
 
@@ -76,7 +76,7 @@ state:
   path: .loop/runs/{{ run.id }}/state.yaml
 
 transcripts:
-  path: .loop/runs/{{ run.id }}/transcripts/{{ job.id }}.jsonl
+  path: .loop/runs/{{ run.id }}/transcripts/{{ step.id }}.jsonl
   save: agentic                 # agentic | all | none
 
 input:
@@ -102,7 +102,7 @@ agents:
     system_prompt: You fix bugs and re-run tests until green.
     tools: [shell]
 
-jobs:
+steps:
   test:
     type: script
     run: npm test -- --json
@@ -111,12 +111,12 @@ jobs:
 
   diagnose:
     needs: [test]
-    if: "{{ jobs.test.outputs.failures | length > 0 }}"
+    if: "{{ steps.test.outputs.failures | length > 0 }}"
     type: agent
     agent: triager
     prompt: |
       Diagnose these failures and hand off to `fixer` once you have a plan:
-      {{ jobs.test.outputs.failures }}
+      {{ steps.test.outputs.failures }}
     outputs:
       root_cause: { type: string }
       affected_packages: { type: array }
@@ -125,9 +125,9 @@ jobs:
     needs: [diagnose]
     type: agent
     agent: fixer
-    prompt: "Fix the root cause: {{ jobs.diagnose.outputs.root_cause }}"
-    max_steps: 20                                        # single-job iteration cap
-    until: "{{ jobs.implement.outputs.tests_pass == true }}"   # single-job stop condition
+    prompt: "Fix the root cause: {{ steps.diagnose.outputs.root_cause }}"
+    max_steps: 20                                        # single-step iteration cap
+    until: "{{ steps.implement.outputs.tests_pass == true }}"   # single-step stop condition
     outputs:
       tests_pass: { type: boolean }
       diff_summary: { type: string }
@@ -139,13 +139,13 @@ jobs:
     outputs:
       passed: { type: boolean }
     retry:
-      until: "{{ jobs.verify.outputs.passed == true }}"
+      until: "{{ steps.verify.outputs.passed == true }}"
       max_attempts: 3
       rerun: [implement, verify]      # bounded loop-back — see rationale below
 
   approve:
     needs: [verify]
-    if: "{{ jobs.verify.outputs.passed == true }}"
+    if: "{{ steps.verify.outputs.passed == true }}"
     type: human_gate
     options:
       - name: approve
@@ -153,10 +153,10 @@ jobs:
 
   release_notes:
     needs: [approve]
-    if: "{{ jobs.approve.output.choice == 'approve' }}"
+    if: "{{ steps.approve.output.choice == 'approve' }}"
     strategy:
       matrix:
-        package: "{{ jobs.diagnose.outputs.affected_packages }}"
+        package: "{{ steps.diagnose.outputs.affected_packages }}"
       max_parallel: 5
       on_error: continue
     type: agent
@@ -169,11 +169,11 @@ jobs:
     needs: [release_notes]
     uses: ./workflows/publish.yaml
     with:
-      notes: "{{ jobs.release_notes.outputs }}"
+      notes: "{{ steps.release_notes.outputs }}"
 
 hooks:
   on_start: "{{ log('run ' + run.id + ' started') }}"
-  on_job_complete: "{{ log(job.id + ' -> ' + job.status) }}"
+  on_step_complete: "{{ log(step.id + ' -> ' + step.status) }}"
   on_error: "{{ notify(run.id, error.message) }}"
 ```
 
@@ -187,36 +187,36 @@ hooks:
 | `name`, `description` | Identity | All sources |
 | `on` | Trigger (manual, schedule, …) | GitHub Actions `on:` |
 | `limits` | Workflow-wide turn cap, wall-clock timeout, cost cap | Conductor `limits:` |
-| `context.mode` | How much prior job output a job sees (`accumulate`/`snapshot`/`minimal`) | Conductor `context_mode` |
+| `context.mode` | How much prior step output a step sees (`accumulate`/`snapshot`/`minimal`) | Conductor `context_mode` |
 | `state.path` | Where the resumable, human-readable run-state file is written | Reconciles Open Agent Spec/Conductor's named-output model with `ohitslaurence/agent-loop`'s plan file |
-| `transcripts` | Where/whether full conversation history is persisted per job | Session-transcript requirement; no direct source analogue |
+| `transcripts` | Where/whether full conversation history is persisted per step | Session-transcript requirement; no direct source analogue |
 | `input` | Typed workflow inputs | Open Agent Spec `input:` |
 | `tools` | Workflow-level tool registry (native, MCP, script) | Open Agent Spec's three tool varieties; Conductor's `tools:` list |
 | `agents` | Reusable agent definitions: model, system prompt, default tools, allowed handoff targets | Taskflow's personalities |
-| `jobs` | The DAG itself | GitHub Actions `jobs:` + Open Agent Spec `depends_on` |
+| `steps` | The DAG itself | GitHub Actions `jobs:` + Open Agent Spec `depends_on` |
 | `hooks` | Lifecycle callbacks | Conductor `hooks:` |
 
-### Job fields common to every type
+### Step fields common to every type
 
 | Field | Purpose |
 |---|---|
-| `needs` | Upstream job IDs — the DAG edges |
+| `needs` | Upstream step IDs — the DAG edges |
 | `if` | Deterministic, non-LLM route condition (first-match-wins evaluation, Conductor-style) |
-| `outputs` | Typed output schema, addressable as `{{ jobs.<id>.outputs.field }}` |
-| `retry` | Bounded re-execution of this job (and optionally named upstream jobs) on failure — see below |
+| `outputs` | Typed output schema, addressable as `{{ steps.<id>.outputs.field }}` |
+| `retry` | Bounded re-execution of this step (and optionally named upstream steps) on failure — see below |
 
-### Job types
+### Step types
 
 - **`type: agent`** — an LLM-backed step. `agent:` references a name from
   the top-level `agents:` registry (model, prompt, default tools all live
   there — kept separate so they can be swapped independently, per the
   "tools/model/identity as independent axes" requirement). `max_steps` and
-  `until` bound the agent's *own* internal iteration on this one job.
+  `until` bound the agent's *own* internal iteration on this one step.
 - **`type: script`** — a deterministic step: a shell command (or HTTP call,
   or any non-LLM action) whose stdout is parsed against `outputs`. Cf.
   Taskflow's `run:` field.
 - **`type: human_gate`** — pauses the run; `options` lists the choices a
-  human can make, addressable downstream as `{{ jobs.<id>.output.choice }}`.
+  human can make, addressable downstream as `{{ steps.<id>.output.choice }}`.
   Cf. Conductor's `human_gate`; conceptually the same as GitHub Actions'
   environment protection rules (required reviewers on an `environment:`).
 - **`type: workflow`** — delegates to another Loop YAML file via `uses:`,
@@ -226,9 +226,9 @@ hooks:
 
 ### Agent handoffs
 
-A job's `agent:` is its *starting* agent identity. That agent can hand off
-mid-job to any agent named in its `handoff:` list (declared once, on the
-agent definition, not per-job):
+A step's `agent:` is its *starting* agent identity. That agent can hand off
+mid-step to any agent named in its `handoff:` list (declared once, on the
+agent definition, not per-step):
 
 ```yaml
 agents:
@@ -237,9 +237,9 @@ agents:
   - name: fixer
 ```
 
-A handoff happens *within* one job — it does not create a new DAG node. This
+A handoff happens *within* one step — it does not create a new DAG node. This
 is deliberate: a handoff is "who should keep working on this," not "should
-this continue" (that's `human_gate`) and not "which job runs next" (that's
+this continue" (that's `human_gate`) and not "which step runs next" (that's
 `needs`/`if`).
 
 ## Design rationale
@@ -252,18 +252,18 @@ verify → (back to implement if verification fails) — that looks like it
 needs a cycle. Conductor gets this by *not* being a strict DAG: its
 `routes:` can point back to an earlier agent.
 
-This schema keeps `jobs`/`needs` strictly acyclic (so the graph stays
+This schema keeps `steps`/`needs` strictly acyclic (so the graph stays
 analyzable — you can always compute a static execution order) and expresses
 the retry-back behavior instead as a bounded, explicit unrolling:
 
 ```yaml
 retry:
-  until: "{{ jobs.verify.outputs.passed == true }}"
+  until: "{{ steps.verify.outputs.passed == true }}"
   max_attempts: 3
   rerun: [implement, verify]
 ```
 
-`rerun` names the jobs to re-execute — it's a re-run instruction, not a graph
+`rerun` names the steps to re-execute — it's a re-run instruction, not a graph
 edge. The DAG itself never has a back-edge; the runtime just knows to loop
 `[implement, verify]` up to `max_attempts` times. This is the schema's answer
 to "three iteration semantics, three constructs" for the whole-cycle case.
@@ -274,9 +274,9 @@ patterns.md found three things that all get called "loop":
 
 | Semantics | Construct | Precedent |
 |---|---|---|
-| Map a job over a list of inputs, run instances in parallel | `strategy.matrix` | Conductor's `for_each` |
+| Map a step over a list of inputs, run instances in parallel | `strategy.matrix` | Conductor's `for_each` |
 | Repeat a whole plan→act→verify cycle until a condition holds | `retry.rerun` | Conductor's conditional routing (adapted to stay acyclic — see above) |
-| Let one job iterate internally until it self-reports done | `max_steps` + `until` | Taskflow's `repeat_prompt` + `max_steps` |
+| Let one step iterate internally until it self-reports done | `max_steps` + `until` | Taskflow's `repeat_prompt` + `max_steps` |
 
 Keeping these as three separate fields (rather than one generic `loop:`
 block) means the state and stop-condition concerns for each stay legible:
@@ -289,10 +289,10 @@ of those options make sense on the other two.
 Three different "what happens next" mechanisms exist in this schema on
 purpose, because patterns.md found they answer three different questions:
 
-- `if:` — **which job runs next** (a deterministic, non-LLM decision)
+- `if:` — **which step runs next** (a deterministic, non-LLM decision)
 - `type: human_gate` — **should this continue at all** (a human decision)
-- `agents[].handoff` — **which agent identity keeps working on this job**
-  (an in-job delegation decision, made by the agent itself)
+- `agents[].handoff` — **which agent identity keeps working on this step**
+  (an in-step delegation decision, made by the agent itself)
 
 Collapsing these into one "pause and reassign" primitive would blur a
 routing decision, an approval decision, and a delegation decision that are
@@ -320,18 +320,18 @@ involved in a run.
 **MVP field set:**
 
 - `loop`, `name` — identity
-- `jobs.<id>.needs` — the DAG, no `if:` (branching deferred)
-- `jobs.<id>.type: agent | script` — only these two step types
-- `jobs.<id>.model` / `prompt` / `tools` — inlined directly on the job; no
+- `steps.<id>.needs` — the DAG, no `if:` (branching deferred)
+- `steps.<id>.type: agent | script` — only these two step types
+- `steps.<id>.model` / `prompt` / `tools` — inlined directly on the step; no
   top-level `agents:`/`tools:` registries yet (those only pay for themselves
-  once handoff or cross-job reuse exists)
-- `jobs.<id>.outputs` — typed, addressable outputs; the DAG can't pass data
-  between jobs without this, so it isn't optional even at MVP
-- `jobs.<id>.max_steps` / `until` — the one stop-condition construct that's
-  truly load-bearing even for a single job (an agentic job that never stops
+  once handoff or cross-step reuse exists)
+- `steps.<id>.outputs` — typed, addressable outputs; the DAG can't pass data
+  between steps without this, so it isn't optional even at MVP
+- `steps.<id>.max_steps` / `until` — the one stop-condition construct that's
+  truly load-bearing even for a single step (an agentic step that never stops
   is the core failure mode a "loop" tool exists to prevent)
 - `limits` — workflow-wide `max_turns`/`timeout`/`budget_usd`, as a blanket
-  safety net behind the per-job one
+  safety net behind the per-step one
 - `state.path` — resumable run-state file
 
 ```yaml
@@ -346,7 +346,7 @@ limits:
 state:
   path: .loop/runs/{{ run.id }}/state.yaml
 
-jobs:
+steps:
   test:
     type: script
     run: npm test -- --json
@@ -358,9 +358,9 @@ jobs:
     type: agent
     model: claude-sonnet-5
     tools: [shell]
-    prompt: "Fix the failures: {{ jobs.test.outputs.failures }}"
+    prompt: "Fix the failures: {{ steps.test.outputs.failures }}"
     max_steps: 20
-    until: "{{ jobs.implement.outputs.tests_pass == true }}"
+    until: "{{ steps.implement.outputs.tests_pass == true }}"
     outputs:
       tests_pass: { type: boolean }
 ```
@@ -373,7 +373,7 @@ jobs:
 | `type: human_gate` | Needs an approval/notification surface (who gets asked, how) that doesn't exist yet — infrastructure, not schema |
 | `strategy.matrix` | Parallel fan-out matters once there's a real list-of-things use case; premature before that |
 | `retry`/`rerun` (cycle retry) | The bounded-loop-back semantics are the most novel/riskiest part of the design (see rationale above) — worth proving out the simple case first |
-| `agents:`/`tools:` registries, `handoff` | Only pay off with reuse across jobs or multiple agent identities in one run; a single inline agent per job is enough until then |
+| `agents:`/`tools:` registries, `handoff` | Only pay off with reuse across steps or multiple agent identities in one run; a single inline agent per step is enough until then |
 | `type: workflow` (`uses`/`with`) | Composability matters once there's more than one workflow file to compose |
 | `context.mode` | `accumulate` is a reasonable fixed default until context-cost becomes an actual problem |
 | `hooks` | Observability beyond the state file and transcripts can wait until something is consuming those events |
