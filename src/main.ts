@@ -7,9 +7,11 @@
 // executes it. For now it only resolves and reports the file — execution
 // isn't implemented yet.
 
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse } from 'yaml'
+import { validateWish } from './schema.ts'
 
 const wishesDir = '.agents/wishes'
 
@@ -33,7 +35,23 @@ function main (): void {
     process.exit(1)
   }
 
-  console.log(`wish: found ${path} (execution not yet implemented)`)
+  let parsed: unknown
+  try {
+    parsed = parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    console.error(`wish: ${path}: invalid YAML: ${(error as Error).message}`)
+    process.exit(1)
+  }
+
+  const result = validateWish(parsed)
+  if (!result.ok) {
+    console.error(`wish: ${path}: invalid wish:`)
+    for (const error of result.errors) console.error(`  - ${error}`)
+    process.exit(1)
+  }
+
+  const jobCount = Object.keys(result.wish.jobs).length
+  console.log(`wish: ${path} is valid (${jobCount} job${jobCount === 1 ? '' : 's'}) — execution not yet implemented`)
 }
 
 // Only run when executed directly, e.g. `wish hello` — not when imported by

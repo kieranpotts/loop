@@ -23,5 +23,8 @@
     "lint": "./run/lint",
     "typecheck": "./run/typecheck",
     "test": "./run/test"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
   }
 }

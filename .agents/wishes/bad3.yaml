@@ -1,0 +1,11 @@
+loop: "1"
+name: bad3
+jobs:
+  a:
+    needs: [b]
+    type: script
+    run: echo a
+  b:
+    needs: [a]
+    type: script
+    run: echo b

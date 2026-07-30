@@ -1,0 +1,5 @@
+loop: "1"
+jobs:
+  greet:
+    type: script
+    run: echo hi
