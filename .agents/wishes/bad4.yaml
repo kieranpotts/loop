@@ -1,6 +1,0 @@
-loop: "1"
-name: bad4
-jobs:
-  a:
-    type: agent
-    run: echo hi

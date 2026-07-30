@@ -6,23 +6,29 @@
 // registries, `uses`, `context.mode`, `hooks`) is deliberately out of scope
 // until those increments land.
 
+import { findCycle } from './dag.ts'
+
 export type JobType = 'agent' | 'script'
 
 export interface OutputField {
   type: 'string' | 'number' | 'boolean' | 'array' | 'object'
 }
 
-export interface Job {
+interface JobBase {
   needs?: string[]
-  type: JobType
-  model?: string
-  prompt?: string
-  tools?: string[]
-  max_steps?: number
-  until?: string
-  run?: string
   outputs?: Record<string, OutputField>
 }
+
+export type Job =
+  | (JobBase & { type: 'script', run: string })
+  | (JobBase & {
+    type: 'agent'
+    model: string
+    prompt: string
+    tools?: string[]
+    max_steps?: number
+    until?: string
+  })
 
 export interface Limits {
   max_turns?: number
@@ -63,6 +69,17 @@ function isStringArray (value: unknown): value is string[] {
 
 function isPositiveInteger (value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+/** Whether a runtime value matches a declared output field's type. */
+export function matchesOutputType (value: unknown, type: OutputField['type']): boolean {
+  switch (type) {
+    case 'string': return typeof value === 'string'
+    case 'number': return typeof value === 'number'
+    case 'boolean': return typeof value === 'boolean'
+    case 'array': return Array.isArray(value)
+    case 'object': return isRecord(value)
+  }
 }
 
 function validateOutputs (value: unknown, path: string, errors: string[]): void {
@@ -130,47 +147,6 @@ function validateJob (value: unknown, id: string, jobIds: Set<string>, errors: s
   }
 
   validateOutputs(value.outputs, `${path}.outputs`, errors)
-}
-
-/** Depth-first search for a cycle in `needs`. Returns the cycle, if any. */
-function findCycle (jobs: Record<string, { needs?: string[] }>): string[] | null {
-  const WHITE = 0
-  const GRAY = 1
-  const BLACK = 2
-  const state = new Map<string, number>()
-  const stack: string[] = []
-
-  function visit (id: string): string[] | null {
-    state.set(id, GRAY)
-    stack.push(id)
-
-    for (const dep of jobs[id]?.needs ?? []) {
-      if (!(dep in jobs)) continue // reported separately as an unknown-job error
-
-      const depState = state.get(dep) ?? WHITE
-      if (depState === GRAY) {
-        const cycleStart = stack.indexOf(dep)
-        return [...stack.slice(cycleStart), dep]
-      }
-      if (depState === WHITE) {
-        const found = visit(dep)
-        if (found) return found
-      }
-    }
-
-    stack.pop()
-    state.set(id, BLACK)
-    return null
-  }
-
-  for (const id of Object.keys(jobs)) {
-    if ((state.get(id) ?? WHITE) === WHITE) {
-      const found = visit(id)
-      if (found) return found
-    }
-  }
-
-  return null
 }
 
 export function validateWish (value: unknown): ValidationResult {

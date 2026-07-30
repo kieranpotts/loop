@@ -3,15 +3,15 @@
 // wish — runs a Loop workflow definition.
 //
 // Wishes are YAML files stored at .agents/wishes/<name>.yaml, relative to the
-// current working directory. `wish <name>` resolves that file and, in time,
-// executes it. For now it only resolves and reports the file — execution
-// isn't implemented yet.
+// current working directory. `wish <name>` resolves, validates, and runs
+// that file. Only `type: script` jobs execute so far — see exec.ts.
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { validateWish } from './schema.ts'
+import { runWish } from './exec.ts'
 
 const wishesDir = '.agents/wishes'
 
@@ -50,8 +50,13 @@ function main (): void {
     process.exit(1)
   }
 
-  const jobCount = Object.keys(result.wish.jobs).length
-  console.log(`wish: ${path} is valid (${jobCount} job${jobCount === 1 ? '' : 's'}) — execution not yet implemented`)
+  const outcome = runWish(result.wish)
+  if (!outcome.ok) {
+    console.error(`wish: ${path}: ${outcome.error}`)
+    process.exit(1)
+  }
+
+  console.log(`wish: ${path}: done`)
 }
 
 // Only run when executed directly, e.g. `wish hello` — not when imported by

@@ -1,7 +1,0 @@
-loop: "1"
-name: bad2
-jobs:
-  a:
-    needs: [nope]
-    type: script
-    run: echo hi
