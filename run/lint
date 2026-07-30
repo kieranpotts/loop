@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+#
+# Lint all JavaScript and TypeScript sources with ESLint, using the
+# neostandard configuration in `eslint.config.js`.
+#
+# Usage: ./run/lint [eslint-args...]
+#
+#   Any extra arguments are forwarded to ESLint, e.g. `./run/lint --quiet`.
+#
+
+set -euo pipefail
+
+# Resolve the repository root so the script works from any directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+
+eslint_bin="${repo_root}/node_modules/.bin/eslint"
+
+if [[ ! -x "${eslint_bin}" ]]; then
+  echo "ESLint is not installed. Run 'npm install' first." >&2
+  exit 1
+fi
+
+cd "${repo_root}"
+exec "${eslint_bin}" . "$@"

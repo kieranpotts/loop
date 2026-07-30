@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+#
+# Run the test suite with the Node.js built-in test runner.
+#
+# Tests live in `test/**/*.test.ts` and run directly through Node's native
+# TypeScript support, so there is no build step and no test dependencies.
+#
+# Usage: ./run/test [node-test-args...]
+#
+#   Any extra arguments are forwarded to `node --test`, eg. `./run/test
+#   --watch` or `./run/test --test-name-pattern=randomMessage`.
+#
+
+set -euo pipefail
+
+# Resolve the repository root so the script works from any directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+
+cd "${repo_root}"
+exec node --test "$@" 'test/**/*.test.ts'

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+#
+# Auto-fix lint problems with ESLint, then report anything that remains.
+#
+# Usage: ./run/fix [eslint-args...]
+#
+#   A thin wrapper around `./run/lint --fix`; extra arguments are forwarded
+#   to ESLint.
+#
+
+set -euo pipefail
+
+# Resolve this script's directory so the sibling `lint` script is found from
+# any working directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+exec "${script_dir}/lint" --fix "$@"

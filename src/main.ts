@@ -7,12 +7,18 @@
 // executes it. For now it only resolves and reports the file — execution
 // isn't implemented yet.
 
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const wishesDir = '.agents/wishes'
 
-function main(): void {
+/** The path a wish name resolves to, relative to the current working directory. */
+export function wishPath (name: string): string {
+  return join(wishesDir, `${name}.yaml`)
+}
+
+function main (): void {
   const name = process.argv[2]
 
   if (process.argv.length !== 3 || !name) {
@@ -20,7 +26,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const path = join(wishesDir, `${name}.yaml`)
+  const path = wishPath(name)
 
   if (!existsSync(path)) {
     console.error(`wish: ${path}: not found`)
@@ -30,4 +36,11 @@ function main(): void {
   console.log(`wish: found ${path} (execution not yet implemented)`)
 }
 
-main()
+// Only run when executed directly, e.g. `wish hello` — not when imported by
+// the test suite. `realpathSync` matters here: the installed `wish` command is
+// a symlink (see run/install), and Node resolves symlinks when reporting
+// `import.meta.url` for the module it loaded but NOT when populating
+// `process.argv[1]`, so a plain string comparison never matches through it.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+  main()
+}

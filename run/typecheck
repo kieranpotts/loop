@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+#
+# Type-check all TypeScript sources with the TypeScript compiler.
+#
+# This is a CHECK, not a build: `tsc` runs with `noEmit` (see tsconfig.json), so
+# nothing is compiled or bundled. Node's type stripping still runs the `.ts`
+# directly. This step catches errors ESLint cannot.
+#
+# Usage: ./run/typecheck [tsc-args...]
+#
+#   Any extra arguments are forwarded to `tsc`, eg. `./run/typecheck --watch`.
+#
+
+set -euo pipefail
+
+# Resolve the repository root so the script works from any directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+
+tsc_bin="${repo_root}/node_modules/.bin/tsc"
+if [[ ! -x "${tsc_bin}" ]]; then
+  echo "TypeScript is not installed. Run 'npm install' first." >&2
+  exit 1
+fi
+
+cd "${repo_root}"
+exec "${tsc_bin}" -p tsconfig.json "$@"

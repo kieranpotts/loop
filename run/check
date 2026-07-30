@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+#
+# Run all checks: lint, then type-check, then tests, in sequence.
+#
+# Stops at the first failure (earlier checks short-circuit later ones), making
+# this the single command to run before committing or in CI.
+#
+# Usage: ./run/check
+#
+
+set -euo pipefail
+
+# Resolve this script's directory so the sibling scripts are found from any
+# working directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+"${script_dir}/lint"
+"${script_dir}/typecheck"
+"${script_dir}/test"
