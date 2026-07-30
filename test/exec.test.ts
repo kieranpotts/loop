@@ -532,3 +532,181 @@ describe('runWish — limits', () => {
     assert.equal(runWish(wish).ok, true)
   })
 })
+
+describe('runWish — retry', () => {
+  it('retries a failing step and succeeds once a later attempt passes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-retry-'))
+    const marker = join(dir, 'ran-once')
+    try {
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: {
+          check: {
+            type: 'script',
+            run: `test -f ${marker} && exit 0 || (touch ${marker} && exit 1)`,
+            retry: { max_attempts: 2, rerun: ['check'] },
+          },
+        },
+      }
+      assert.equal(runWish(wish).ok, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('gives up after max_attempts and reports the last attempt\'s error', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      steps: {
+        check: {
+          type: 'script',
+          run: 'exit 9',
+          retry: { max_attempts: 3, rerun: ['check'] },
+        },
+      },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes("step 'check': command exited with status 9"))
+  })
+
+  it('reruns every step named in retry.rerun, in order, on each attempt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-retry-'))
+    const log = join(dir, 'log')
+    try {
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: {
+          a: { type: 'script', run: `echo a >> ${log}` },
+          b: {
+            type: 'script',
+            run: `echo b >> ${log}; exit 1`,
+            retry: { max_attempts: 2, rerun: ['a', 'b'] },
+          },
+        },
+      }
+      const outcome = runWish(wish)
+      assert.equal(outcome.ok, false)
+      assert.equal(readFileSync(log, 'utf8'), 'a\nb\na\nb\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('stops a retry attempt early if an earlier rerun step fails, without running the rest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-retry-'))
+    const log = join(dir, 'log')
+    const marker = join(dir, 'fixer-ran-once')
+    try {
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: {
+          // Succeeds the first time (the main pass), fails every time after
+          // (any retry attempt) — so 'check' failing forces a retry, and the
+          // retry's own rerun of 'fixer' then fails too.
+          fixer: {
+            type: 'script',
+            run: `echo fixer >> ${log}; test -f ${marker} && exit 1 || (touch ${marker} && exit 0)`,
+          },
+          check: {
+            type: 'script',
+            run: `echo check >> ${log}; exit 1`,
+            retry: { max_attempts: 2, rerun: ['fixer', 'check'] },
+          },
+        },
+      }
+      const outcome = runWish(wish)
+      assert.equal(outcome.ok, false)
+      // Main pass: fixer (succeeds), check (fails). Retry attempt 2 reruns
+      // fixer, which now fails, so 'check' is never reached a second time.
+      assert.equal(readFileSync(log, 'utf8'), 'fixer\ncheck\nfixer\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('records the final success in state after a retry recovers', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-retry-'))
+    const marker = join(dir, 'ran-once')
+    const statePath = join(dir, 'state.yaml')
+    try {
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        state: { path: statePath },
+        steps: {
+          check: {
+            type: 'script',
+            run: `test -f ${marker} && exit 0 || (touch ${marker} && exit 1)`,
+            retry: { max_attempts: 2, rerun: ['check'] },
+          },
+        },
+      }
+      const outcome = runWish(wish)
+      assert.equal(outcome.ok, true)
+      const state = parse(readFileSync(statePath, 'utf8'))
+      assert.equal(state.steps.check.status, 'success')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts immediately if limits.max_turns is reached during a retry, without exhausting max_attempts', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      limits: { max_turns: 2 },
+      steps: {
+        check: {
+          type: 'script',
+          run: 'exit 1',
+          retry: { max_attempts: 10, rerun: ['check'] },
+        },
+      },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes('limits.max_turns (2) reached'))
+  })
+
+  it('retries a failing agent step and succeeds once a later attempt passes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-genie-retry-'))
+    const marker = join(dir, 'ran-once')
+    try {
+      const script = `#!/usr/bin/env node
+const fs = require('node:fs')
+if (fs.existsSync('${marker}')) {
+  process.stdout.write('ok')
+  process.exit(0)
+} else {
+  fs.writeFileSync('${marker}', '')
+  process.exit(1)
+}
+`
+      const geniePath = join(dir, 'genie')
+      writeFileSync(geniePath, script)
+      chmodSync(geniePath, 0o755)
+
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        steps: {
+          ask: {
+            type: 'agent',
+            model: 'computer-programmer',
+            prompt: 'p',
+            retry: { max_attempts: 2, rerun: ['ask'] },
+          },
+        },
+      }
+      const outcome = withPrependedPath(dir, () => runWish(wish))
+      assert.equal(outcome.ok, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

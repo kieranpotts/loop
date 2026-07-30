@@ -12,6 +12,17 @@
 // `limits.budget_usd` is not: cost tracking needs token usage pulled out of
 // genie's `--json` stream plus a per-role pricing table, real separable work
 // deferred for now.
+//
+// A step's own failure (nonzero exit, thrown error, output-schema mismatch)
+// triggers its `retry` config, if it has one: `retry.rerun` is re-executed,
+// in order, up to `retry.max_attempts` total tries (the initial failed
+// attempt counts as the first), stopping as soon as the whole `rerun`
+// sequence succeeds. There's no separate boolean `until:` condition — a
+// deterministic check step is expected to fail (nonzero exit, or an
+// `outputs` mismatch) exactly when it judges an upstream agent's output
+// unacceptable, the same idiom as a CI step. `rerun` may only name the
+// retrying step itself or an earlier one; `steps` has no dependency graph
+// to jump forward through.
 
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -315,17 +326,23 @@ export function runWish (wish: Wish): RunOutcome {
 
   let turns = 0
 
-  for (const id of order) {
+  // Runs exactly one step, honoring `limits` and updating `context`/`state`.
+  // `fatal: true` marks a run-level abort (a `limits` cap reached before the
+  // step could even start) — distinct from an ordinary step failure, which
+  // is retryable if the step declares `retry`. A `limits` cap reached during
+  // a retry attempt aborts the whole run immediately, same as during the
+  // main pass — it does not just end that attempt.
+  function executeStep (id: string): StepResult | { ok: false, error: string, fatal: true } {
     turns++
     if (maxTurns !== undefined && turns > maxTurns) {
-      return { ok: false, error: `limits.max_turns (${maxTurns}) reached before step '${id}' could run` }
+      return { ok: false, error: `limits.max_turns (${maxTurns}) reached before step '${id}' could run`, fatal: true }
     }
 
     let stepTimeoutMs: number | undefined
     if (timeoutMs !== undefined) {
       const remaining = timeoutMs - (Date.now() - startTime)
       if (remaining <= 0) {
-        return { ok: false, error: `limits.timeout (${wish.limits!.timeout}) reached before step '${id}' could run` }
+        return { ok: false, error: `limits.timeout (${wish.limits!.timeout}) reached before step '${id}' could run`, fatal: true }
       }
       stepTimeoutMs = remaining
     }
@@ -335,20 +352,36 @@ export function runWish (wish: Wish): RunOutcome {
       ? runScriptStep(id, step, context, stepTimeoutMs)
       : runAgentStep(id, step, context, stepTimeoutMs)
 
-    if (!result.ok) {
-      if (state && statePath) {
-        state.steps[id] = { status: 'failed', error: result.error }
-        writeState(statePath, state)
-      }
-      return result
+    if (result.ok) {
+      context.steps[id] = { outputs: result.outputs }
     }
-
-    context.steps[id] = { outputs: result.outputs }
-
     if (state && statePath) {
-      state.steps[id] = { status: 'success', outputs: result.outputs }
+      state.steps[id] = result.ok
+        ? { status: 'success', outputs: result.outputs }
+        : { status: 'failed', error: result.error }
       writeState(statePath, state)
     }
+
+    return result
+  }
+
+  for (const id of order) {
+    const step = wish.steps[id] as Step
+    let result = executeStep(id)
+
+    if (!result.ok && !('fatal' in result) && step.retry) {
+      const { max_attempts: maxAttempts, rerun } = step.retry
+      // Attempt 1 is the run above; loop covers attempts 2..max_attempts.
+      for (let attempt = 2; attempt <= maxAttempts && !result.ok; attempt++) {
+        for (const rerunId of rerun) {
+          result = executeStep(rerunId)
+          if (!result.ok) break
+        }
+        if ('fatal' in result && result.fatal) break
+      }
+    }
+
+    if (!result.ok) return { ok: false, error: result.error }
   }
 
   return statePath ? { ok: true, statePath } : { ok: true }

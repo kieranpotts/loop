@@ -204,3 +204,71 @@ describe('validateWish — step.outputs', () => {
     assert.ok(!result.ok && result.errors.some(e => e.startsWith('steps.a.outputs.field.type:')))
   })
 })
+
+describe('validateWish — step.retry', () => {
+  it('accepts a valid retry config that reruns an earlier step and itself', () => {
+    const result = validateWish({
+      wish: '1',
+      name: 'x',
+      steps: {
+        a: { type: 'script', run: 'x' },
+        b: { type: 'script', run: 'x', retry: { max_attempts: 3, rerun: ['a', 'b'] } },
+      },
+    })
+    assert.equal(result.ok, true)
+  })
+
+  it('accepts a retry config on an agent step', () => {
+    const result = validateWish({
+      wish: '1',
+      name: 'x',
+      steps: {
+        a: { type: 'agent', model: 'm', prompt: 'p', retry: { max_attempts: 2, rerun: ['a'] } },
+      },
+    })
+    assert.equal(result.ok, true)
+  })
+
+  it('rejects a non-positive-integer max_attempts', () => {
+    const result = validateWish({
+      wish: '1',
+      name: 'x',
+      steps: { a: { type: 'script', run: 'x', retry: { max_attempts: 0, rerun: ['a'] } } },
+    })
+    assert.equal(result.ok, false)
+    assert.ok(!result.ok && result.errors.includes('steps.a.retry.max_attempts: must be a positive integer'))
+  })
+
+  it('rejects an empty rerun list', () => {
+    const result = validateWish({
+      wish: '1',
+      name: 'x',
+      steps: { a: { type: 'script', run: 'x', retry: { max_attempts: 2, rerun: [] } } },
+    })
+    assert.equal(result.ok, false)
+    assert.ok(!result.ok && result.errors.includes('steps.a.retry.rerun: must be a non-empty array of step names'))
+  })
+
+  it('rejects a rerun entry that names an unknown step', () => {
+    const result = validateWish({
+      wish: '1',
+      name: 'x',
+      steps: { a: { type: 'script', run: 'x', retry: { max_attempts: 2, rerun: ['missing'] } } },
+    })
+    assert.equal(result.ok, false)
+    assert.ok(!result.ok && result.errors.includes("steps.a.retry.rerun: references unknown step 'missing'"))
+  })
+
+  it('rejects a rerun entry that names a later step', () => {
+    const result = validateWish({
+      wish: '1',
+      name: 'x',
+      steps: {
+        a: { type: 'script', run: 'x', retry: { max_attempts: 2, rerun: ['b'] } },
+        b: { type: 'script', run: 'x' },
+      },
+    })
+    assert.equal(result.ok, false)
+    assert.ok(!result.ok && result.errors.includes("steps.a.retry.rerun: 'b' runs after this step — retry can only rerun this step or an earlier one"))
+  })
+})

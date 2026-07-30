@@ -1,8 +1,8 @@
 // Validates a parsed wish against the MVP field set from
 // docs/design/design.md's "Minimal MVP increment": `wish`/`name`, `steps`
-// with `type: agent | script`/`outputs`, `max_steps`/`until`, workflow-wide
-// `limits`, and `state.path`. Everything else the full schema proposes
-// (`if`, `human_gate`, `retry`, agent/tool registries, `uses`,
+// with `type: agent | script`/`outputs`/`retry`, `max_steps`/`until`,
+// workflow-wide `limits`, and `state.path`. Everything else the full schema
+// proposes (`if`, `human_gate`, agent/tool registries, `uses`,
 // `context.mode`, `hooks`) is deliberately out of scope until those
 // increments land. `steps` is a sequential pipeline, not a DAG — see
 // docs/design/design.md's design decisions for why.
@@ -15,8 +15,14 @@ export interface OutputField {
   type: 'string' | 'number' | 'boolean' | 'array' | 'object'
 }
 
+export interface Retry {
+  max_attempts: number
+  rerun: string[]
+}
+
 interface StepBase {
   outputs?: Record<string, OutputField>
+  retry?: Retry
 }
 
 export type Step =
@@ -103,7 +109,37 @@ function validateOutputs (value: unknown, path: string, errors: string[]): void 
   }
 }
 
-function validateStep (value: unknown, id: string, errors: string[]): void {
+/**
+ * `retry.rerun` may only name the step it's declared on or an earlier one —
+ * `steps` is a sequential pipeline (see design.md's design decisions), so
+ * "retry" only makes sense as "go back", never "jump ahead".
+ */
+function validateRetry (value: unknown, path: string, ownerIndex: number, stepIndex: Map<string, number>, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push(`${path}: must be an object`)
+    return
+  }
+
+  if (!isPositiveInteger(value.max_attempts)) {
+    errors.push(`${path}.max_attempts: must be a positive integer`)
+  }
+
+  if (!isStringArray(value.rerun) || value.rerun.length === 0) {
+    errors.push(`${path}.rerun: must be a non-empty array of step names`)
+    return
+  }
+
+  for (const dep of value.rerun) {
+    const depIndex = stepIndex.get(dep)
+    if (depIndex === undefined) {
+      errors.push(`${path}.rerun: references unknown step '${dep}'`)
+    } else if (depIndex > ownerIndex) {
+      errors.push(`${path}.rerun: '${dep}' runs after this step — retry can only rerun this step or an earlier one`)
+    }
+  }
+}
+
+function validateStep (value: unknown, id: string, stepIndex: Map<string, number>, errors: string[]): void {
   const path = `steps.${id}`
 
   if (!isRecord(value)) {
@@ -138,6 +174,10 @@ function validateStep (value: unknown, id: string, errors: string[]): void {
   }
 
   validateOutputs(value.outputs, `${path}.outputs`, errors)
+
+  if (value.retry !== undefined) {
+    validateRetry(value.retry, `${path}.retry`, stepIndex.get(id)!, stepIndex, errors)
+  }
 }
 
 export function validateWish (value: unknown): ValidationResult {
@@ -179,8 +219,9 @@ export function validateWish (value: unknown): ValidationResult {
     errors.push('steps: required, must be a non-empty object')
   } else {
     const steps = value.steps
-    for (const id of Object.keys(steps)) {
-      validateStep(steps[id], id, errors)
+    const stepIndex = new Map(Object.keys(steps).map((id, index) => [id, index]))
+    for (const id of stepIndex.keys()) {
+      validateStep(steps[id], id, stepIndex, errors)
     }
   }
 

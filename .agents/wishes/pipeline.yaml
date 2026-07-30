@@ -1,8 +1,12 @@
 wish: "1"
 name: pipeline
 
+# Workflow-wide safety nets - blunt "don't run forever" backstops.
 limits:
+  # A hard cap on the total step executions for the whole run. Each script and single-shot agent call,
+  # plus each subsequent retry, counts as one turn.
   max_turns: 10
+  # Wall-clock budget for the entire run/
   timeout: 30s
 
 state:

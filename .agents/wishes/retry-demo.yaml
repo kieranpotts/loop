@@ -1,0 +1,10 @@
+wish: "1"
+name: retry-demo
+
+steps:
+  check:
+    type: script
+    run: 'echo "always fails" >&2 && exit 1'
+    retry:
+      max_attempts: 3
+      rerun: [check]
