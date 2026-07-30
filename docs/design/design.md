@@ -29,13 +29,33 @@ because a concrete design has to commit to something:
   back into one field would lose the distinction that made it worth calling
   out.
 
+- **Sequential pipeline, not a DAG** (revised 2026-07-30, after the rest of
+  this doc was first written): `steps` runs in document order — the order
+  steps are declared in the YAML — with no dependency field and no
+  concurrent execution. The original design below called for `needs:` edges
+  and a `strategy.matrix` construct for concurrent branches, matching the
+  "YAML DAG" and "Parallel branches" requirements. Both were removed:
+  real usage never needed independent branches, and the actual execution
+  backend for agent steps (`genie`, routed through a local Ollama daemon in
+  this project's setup) serializes model calls regardless of how many `wish`
+  tries to run at once — so concurrent steps would only add DAG-validation
+  complexity (cycle detection, topological sort) without buying real
+  wall-clock benefit. See "Retry cycles without a dependency graph" below
+  for what this means for the bounded-loop-back pattern, and
+  [requirements.md](./requirements.md)'s revision note for the full
+  rationale. Mentions of `needs:`, DAG edges, and `strategy.matrix` elsewhere
+  in this document are the *original* design and are kept for history, not
+  as the current target shape — the "Field reference" and rationale
+  sections below have been updated to reflect the pipeline model; the full
+  example has not been rewritten line-by-line beyond removing `needs:`.
+
 ## Requirements → schema mapping
 
 | Requirement | Schema construct |
 |---|---|
-| YAML DAG | `steps.<id>.needs` (acyclic; see rationale below) |
+| YAML sequential pipeline | `steps` (ordered mapping; document order is execution order — see design decisions above) |
 | Human gates | `steps.<id>.type: human_gate` |
-| Parallel branches | `steps.<id>.strategy.matrix` (also covers per-item iteration) |
+| ~~Parallel branches~~ | Removed — see design decisions above |
 | Mix of agentic/deterministic steps | `steps.<id>.type: agent \| script \| human_gate \| workflow` |
 | Agent handoffs | `agents[].handoff`, referenced from within an agentic step |
 | Stop conditions, iteration limits | `limits:` (workflow), `steps.<id>.retry` (cycle), `steps.<id>.max_steps`/`until` (single-step) |
@@ -44,7 +64,7 @@ because a concrete design has to commit to something:
 | Typed, addressable step outputs | `steps.<id>.outputs` schema, referenced as `{{ steps.<id>.outputs.field }}` |
 | Tools/model/identity as independent axes | `tools:`, `agents:` registries, referenced separately from a step |
 | Conditional/deterministic routing | `steps.<id>.if` |
-| Three iteration semantics | `strategy.matrix` / `retry.rerun` / `max_steps`+`until` (see below) |
+| Iteration semantics | `retry.rerun` (whole-cycle repeat) / `max_steps`+`until` (single-step) — see below |
 | Resource caps beyond iteration count | `limits.timeout`, `limits.budget_usd` |
 | Retry policy separate from stop conditions | `steps.<id>.retry` |
 | Composable/reusable workflows | `steps.<id>.uses` + `with` |
@@ -110,7 +130,6 @@ steps:
       failures: { type: array }
 
   diagnose:
-    needs: [test]
     if: "{{ steps.test.outputs.failures | length > 0 }}"
     type: agent
     agent: triager
@@ -122,7 +141,6 @@ steps:
       affected_packages: { type: array }
 
   implement:
-    needs: [diagnose]
     type: agent
     agent: fixer
     prompt: "Fix the root cause: {{ steps.diagnose.outputs.root_cause }}"
@@ -133,7 +151,6 @@ steps:
       diff_summary: { type: string }
 
   verify:
-    needs: [implement]
     type: script
     run: npm test -- --json
     outputs:
@@ -144,7 +161,6 @@ steps:
       rerun: [implement, verify]      # bounded loop-back — see rationale below
 
   approve:
-    needs: [verify]
     if: "{{ steps.verify.outputs.passed == true }}"
     type: human_gate
     options:
@@ -152,7 +168,6 @@ steps:
       - name: reject
 
   release_notes:
-    needs: [approve]
     if: "{{ steps.approve.output.choice == 'approve' }}"
     strategy:
       matrix:
@@ -166,7 +181,6 @@ steps:
       notes: { type: string }
 
   publish:
-    needs: [release_notes]
     uses: ./workflows/publish.yaml
     with:
       notes: "{{ steps.release_notes.outputs }}"
@@ -193,14 +207,13 @@ hooks:
 | `input` | Typed workflow inputs | Open Agent Spec `input:` |
 | `tools` | Workflow-level tool registry (native, MCP, script) | Open Agent Spec's three tool varieties; Conductor's `tools:` list |
 | `agents` | Reusable agent definitions: model, system prompt, default tools, allowed handoff targets | Taskflow's personalities |
-| `steps` | The DAG itself | GitHub Actions `jobs:` + Open Agent Spec `depends_on` |
+| `steps` | The pipeline itself — an ordered mapping, run in document order | GitHub Actions' job-level `steps:` list (always sequential, no dependency field) — a deliberate scoping-down from a full DAG; see design decisions above |
 | `hooks` | Lifecycle callbacks | Conductor `hooks:` |
 
 ### Step fields common to every type
 
 | Field | Purpose |
 |---|---|
-| `needs` | Upstream step IDs — the DAG edges |
 | `if` | Deterministic, non-LLM route condition (first-match-wins evaluation, Conductor-style) |
 | `outputs` | Typed output schema, addressable as `{{ steps.<id>.outputs.field }}` |
 | `retry` | Bounded re-execution of this step (and optionally named upstream steps) on failure — see below |
@@ -246,24 +259,26 @@ agents:
   - name: fixer
 ```
 
-A handoff happens *within* one step — it does not create a new DAG node. This
-is deliberate: a handoff is "who should keep working on this," not "should
-this continue" (that's `human_gate`) and not "which step runs next" (that's
-`needs`/`if`).
+A handoff happens *within* one step — it does not create a new pipeline
+entry. This is deliberate: a handoff is "who should keep working on this,"
+not "should this continue" (that's `human_gate`) and not "which step runs
+next" (that's `if` — see design decisions above on why there's no `needs`
+to route around).
 
 ## Design rationale
 
-### DAG acyclicity vs. the "retry cycle" pattern
+### Retry cycles without a dependency graph
 
-Requirement #1 asks for a DAG, which by definition has no cycles. But
 patterns.md's research found a real, common pattern — plan → implement →
 verify → (back to implement if verification fails) — that looks like it
-needs a cycle. Conductor gets this by *not* being a strict DAG: its
-`routes:` can point back to an earlier agent.
-
-This schema keeps `steps`/`needs` strictly acyclic (so the graph stays
-analyzable — you can always compute a static execution order) and expresses
-the retry-back behavior instead as a bounded, explicit unrolling:
+needs a cycle. Conductor gets this by having non-DAG `routes:` that can
+point back to an earlier agent. The original (DAG) version of this schema
+kept `steps`/`needs` strictly acyclic instead, and expressed the retry-back
+behavior as a bounded, explicit unrolling — a decision that turns out not to
+depend on there being a DAG at all: a plain sequential pipeline has no way
+to declare a back-edge in the first place (there's no dependency field to
+point backwards with), so it's trivially free of this problem, and the same
+`retry`/`rerun` construct still works unchanged:
 
 ```yaml
 retry:
@@ -272,26 +287,28 @@ retry:
   rerun: [implement, verify]
 ```
 
-`rerun` names the steps to re-execute — it's a re-run instruction, not a graph
-edge. The DAG itself never has a back-edge; the runtime just knows to loop
-`[implement, verify]` up to `max_attempts` times. This is the schema's answer
-to "three iteration semantics, three constructs" for the whole-cycle case.
+`rerun` names the steps to re-execute — an explicit re-run instruction, not a
+graph edge of any kind. The runtime just knows to loop `[implement, verify]`
+up to `max_attempts` times. This is the schema's answer to the whole-cycle
+case of "iteration semantics" below.
 
-### Three iteration semantics, three constructs
+### Iteration semantics
 
-patterns.md found three things that all get called "loop":
+patterns.md found (at least) three things that get called "loop"; this
+schema covers two of them (the third, mapping a step over a list of inputs
+in parallel — Conductor's `for_each` / this schema's original
+`strategy.matrix` — was removed along with parallel branches generally; see
+design decisions above):
 
 | Semantics | Construct | Precedent |
 |---|---|---|
-| Map a step over a list of inputs, run instances in parallel | `strategy.matrix` | Conductor's `for_each` |
-| Repeat a whole plan→act→verify cycle until a condition holds | `retry.rerun` | Conductor's conditional routing (adapted to stay acyclic — see above) |
+| Repeat a whole plan→act→verify cycle until a condition holds | `retry.rerun` | Conductor's conditional routing (adapted to a pipeline with no back-edges — see above) |
 | Let one step iterate internally until it self-reports done | `max_steps` + `until` | Taskflow's `repeat_prompt` + `max_steps` |
 
-Keeping these as three separate fields (rather than one generic `loop:`
-block) means the state and stop-condition concerns for each stay legible:
-matrix iteration needs `max_parallel`/`on_error`, cycle retry needs
-`max_attempts`/`rerun`, internal iteration needs `max_steps`/`until` — none
-of those options make sense on the other two.
+Keeping these as two separate fields (rather than one generic `loop:` block)
+means the state and stop-condition concerns for each stay legible: cycle
+retry needs `max_attempts`/`rerun`, internal iteration needs
+`max_steps`/`until` — neither set of options makes sense on the other.
 
 ### Handoff vs. gate vs. routing
 
@@ -321,21 +338,23 @@ genuinely independent in the sources this schema draws from.
 ## Minimal MVP increment
 
 The full schema above is the target shape, not the starting point. A useful
-first cut needs enough to be a real loop tool — a DAG, at least one way to
-stop, and state that survives a crash — without the machinery that only pays
-off once there's more than one workflow to reuse or more than one person
-involved in a run.
+first cut needs enough to be a real loop tool — an ordered pipeline of
+steps, at least one way to stop, and state that survives a crash — without
+the machinery that only pays off once there's more than one workflow to
+reuse or more than one person involved in a run.
 
 **MVP field set:**
 
 - `wish` (optional, defaults to `"1"`), `name` — identity
-- `steps.<id>.needs` — the DAG, no `if:` (branching deferred)
+- `steps` — an ordered mapping run in document order, no dependency field
+  and no `if:` (branching deferred; see design decisions above for why
+  there's no `needs:` at all, at MVP or otherwise)
 - `steps.<id>.type: agent | script` — only these two step types
 - `steps.<id>.model` / `prompt` / `tools` — inlined directly on the step; no
   top-level `agents:`/`tools:` registries yet (those only pay for themselves
   once handoff or cross-step reuse exists)
-- `steps.<id>.outputs` — typed, addressable outputs; the DAG can't pass data
-  between steps without this, so it isn't optional even at MVP
+- `steps.<id>.outputs` — typed, addressable outputs; the pipeline can't pass
+  data between steps without this, so it isn't optional even at MVP
 - `steps.<id>.max_steps` / `until` — the one stop-condition construct that's
   truly load-bearing even for a single step (an agentic step that never stops
   is the core failure mode a "loop" tool exists to prevent)
@@ -363,7 +382,6 @@ steps:
       failures: { type: array }
 
   implement:
-    needs: [test]
     type: agent
     model: computer-programmer
     tools: [shell]
@@ -378,9 +396,9 @@ steps:
 
 | Construct | Deferred because |
 |---|---|
-| `if:` conditional routing | Branching only matters once a workflow has more than one possible path; a straight-line DAG covers the first real use cases |
+| `if:` conditional routing | Branching only matters once a workflow has more than one possible path; a straight-line pipeline covers the first real use cases |
 | `type: human_gate` | Needs an approval/notification surface (who gets asked, how) that doesn't exist yet — infrastructure, not schema |
-| `strategy.matrix` | Parallel fan-out matters once there's a real list-of-things use case; premature before that |
+| `strategy.matrix` (parallel fan-out) | Removed, not deferred — see "Sequential pipeline, not a DAG" in design decisions above |
 | `retry`/`rerun` (cycle retry) | The bounded-loop-back semantics are the most novel/riskiest part of the design (see rationale above) — worth proving out the simple case first |
 | `agents:`/`tools:` registries, `handoff` | Only pay off with reuse across steps or multiple agent identities in one run; a single inline agent per step is enough until then |
 | `type: workflow` (`uses`/`with`) | Composability matters once there's more than one workflow file to compose |
@@ -390,6 +408,6 @@ steps:
 | `on:` triggers | A CLI invocation (`wish <name>`) is sufficient before scheduling/webhooks are needed |
 
 **Suggested sequencing** after MVP: `if:` + `type: human_gate` next (the
-two cheapest, most-requested additions), then `strategy.matrix`, then
-`retry`/`rerun`, with registries/`handoff`/composability/`hooks` last since
-they're the parts of the schema this design is least battle-tested on.
+two cheapest, most-requested additions), then `retry`/`rerun`, with
+registries/`handoff`/composability/`hooks` last since they're the parts of
+the schema this design is least battle-tested on.

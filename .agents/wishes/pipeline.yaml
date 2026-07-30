@@ -16,6 +16,5 @@ steps:
       message: { type: string }
 
   print:
-    needs: [greet]
     type: script
     run: 'echo "greet said: {{ steps.greet.outputs.message }}"'

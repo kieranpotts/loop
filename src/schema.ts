@@ -1,12 +1,12 @@
 // Validates a parsed wish against the MVP field set from
 // docs/design/design.md's "Minimal MVP increment": `wish`/`name`, `steps`
-// with `needs`/`type: agent | script`/`outputs`, `max_steps`/`until`,
-// workflow-wide `limits`, and `state.path`. Everything else the full schema
-// proposes (`if`, `human_gate`, `strategy.matrix`, `retry`, agent/tool
-// registries, `uses`, `context.mode`, `hooks`) is deliberately out of scope
-// until those increments land.
+// with `type: agent | script`/`outputs`, `max_steps`/`until`, workflow-wide
+// `limits`, and `state.path`. Everything else the full schema proposes
+// (`if`, `human_gate`, `retry`, agent/tool registries, `uses`,
+// `context.mode`, `hooks`) is deliberately out of scope until those
+// increments land. `steps` is a sequential pipeline, not a DAG — see
+// docs/design/design.md's design decisions for why.
 
-import { findCycle } from './dag.ts'
 import { parseDuration } from './duration.ts'
 
 export type StepType = 'agent' | 'script'
@@ -16,7 +16,6 @@ export interface OutputField {
 }
 
 interface StepBase {
-  needs?: string[]
   outputs?: Record<string, OutputField>
 }
 
@@ -104,22 +103,12 @@ function validateOutputs (value: unknown, path: string, errors: string[]): void 
   }
 }
 
-function validateStep (value: unknown, id: string, stepIds: Set<string>, errors: string[]): void {
+function validateStep (value: unknown, id: string, errors: string[]): void {
   const path = `steps.${id}`
 
   if (!isRecord(value)) {
     errors.push(`${path}: must be an object`)
     return
-  }
-
-  if (value.needs !== undefined) {
-    if (!isStringArray(value.needs)) {
-      errors.push(`${path}.needs: must be an array of step names`)
-    } else {
-      for (const dep of value.needs) {
-        if (!stepIds.has(dep)) errors.push(`${path}.needs: references unknown step '${dep}'`)
-      }
-    }
   }
 
   const type = value.type
@@ -190,14 +179,9 @@ export function validateWish (value: unknown): ValidationResult {
     errors.push('steps: required, must be a non-empty object')
   } else {
     const steps = value.steps
-    const stepIds = new Set(Object.keys(steps))
-
-    for (const id of stepIds) {
-      validateStep(steps[id], id, stepIds, errors)
+    for (const id of Object.keys(steps)) {
+      validateStep(steps[id], id, errors)
     }
-
-    const cycle = findCycle(steps as Record<string, { needs?: string[] }>)
-    if (cycle) errors.push(`steps: cyclic 'needs' dependency: ${cycle.join(' -> ')}`)
   }
 
   if (errors.length > 0) return { ok: false, errors }

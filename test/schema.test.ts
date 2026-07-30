@@ -14,7 +14,6 @@ const validWish = {
       outputs: { failures: { type: 'array' } },
     },
     implement: {
-      needs: ['test'],
       type: 'agent',
       model: 'claude-sonnet-5',
       tools: ['shell'],
@@ -126,45 +125,6 @@ describe('validateWish — state', () => {
     })
     assert.equal(result.ok, false)
     assert.ok(!result.ok && result.errors.includes('state.path: required when state is set'))
-  })
-})
-
-describe('validateWish — step.needs', () => {
-  it('rejects a needs entry that names an unknown step', () => {
-    const result = validateWish({
-      wish: '1',
-      name: 'x',
-      steps: { a: { needs: ['missing'], type: 'script', run: 'x' } },
-    })
-    assert.equal(result.ok, false)
-    assert.ok(!result.ok && result.errors.includes("steps.a.needs: references unknown step 'missing'"))
-  })
-
-  it('rejects a two-step cycle', () => {
-    const result = validateWish({
-      wish: '1',
-      name: 'x',
-      steps: {
-        a: { needs: ['b'], type: 'script', run: 'x' },
-        b: { needs: ['a'], type: 'script', run: 'x' },
-      },
-    })
-    assert.equal(result.ok, false)
-    assert.ok(!result.ok && result.errors.some(e => e.startsWith("steps: cyclic 'needs' dependency:")))
-  })
-
-  it('accepts a diamond dependency shape (not a cycle)', () => {
-    const result = validateWish({
-      wish: '1',
-      name: 'x',
-      steps: {
-        a: { type: 'script', run: 'x' },
-        b: { needs: ['a'], type: 'script', run: 'x' },
-        c: { needs: ['a'], type: 'script', run: 'x' },
-        d: { needs: ['b', 'c'], type: 'script', run: 'x' },
-      },
-    })
-    assert.equal(result.ok, true)
   })
 })
 

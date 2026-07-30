@@ -5,23 +5,39 @@ Draft requirements for Loop, informed by the pattern survey in
 This is a design-stage document — a working list to refine before it becomes
 the project's actual [requirements.md](../requirements.md).
 
+> **Revision (2026-07-30): sequential pipeline, not a DAG.** Requirements #1
+> and #3 below originally called for a dependency graph with concurrent
+> branches. Neither turned out to be a real need once actual usage was
+> considered: the author's workflows don't have independent branches worth
+> running concurrently, and even where they might, the practical execution
+> backend (`genie`, routed through a local Ollama daemon) serializes model
+> calls anyway — so concurrent steps would queue behind each other at the
+> model layer regardless of what `wish` itself does. Building and maintaining
+> DAG machinery (dependency validation, cycle detection, topological
+> ordering) for a graph shape that's never actually branched isn't worth the
+> complexity. `wish` therefore runs `steps` strictly in the order they're
+> declared in the YAML — a sequential pipeline, not a graph. See
+> [design.md](./design.md)'s design decisions for the full rationale.
+
 ## Core requirements
 
-1. **YAML DAG**, taking inspiration from the three focus sources
-   ([Open Agent Spec](https://www.openagentspec.dev/),
+1. **YAML sequential pipeline**, taking inspiration from the three focus
+   sources ([Open Agent Spec](https://www.openagentspec.dev/),
    [Conductor](https://github.com/microsoft/conductor),
    [Taskflow Agent](https://github.com/GitHubSecurityLab/seclab-taskflow-agent))
    and from [GitHub Actions'](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
-   `jobs.<id>.needs` / `steps` grammar — a format most engineers on this
-   project will already have muscle memory for.
+   `steps:` grammar — specifically the step list *within* a job, which always
+   runs sequentially with no dependency field, rather than the `jobs:` level
+   (which supports `needs:` and concurrent execution). A format most
+   engineers on this project will already have muscle memory for either way.
 2. **Human gates** — a step type that pauses the run for approval before
    continuing. Conductor's `type: human_gate` (see patterns.md, "Mid-run
    control"). GitHub Actions' environment protection rules (required
    reviewers on an `environment:`) are the same idea expressed differently —
    worth comparing both shapes.
-3. **Parallel branches** — a fixed set of steps that run concurrently and
-   join. Conductor's `parallel:` groups, or GitHub Actions jobs that share no
-   `needs:` dependency and therefore run concurrently by default.
+3. ~~**Parallel branches**~~ — removed. See the revision note above: not a
+   real use case, and the practical execution backend would serialize
+   concurrent model calls anyway.
 4. **Mix of agentic and deterministic steps** — not every step should have
    to invoke a model. A shell command, an HTTP call, or a script step should
    be a first-class step type alongside an LLM step (cf. Taskflow's `run:`
@@ -37,8 +53,9 @@ the project's actual [requirements.md](../requirements.md).
    separate concerns once we looked closely at the sources.
 7. **State and progress tracking** — persisted, resumable record of what a
    run has done. Needs a decision: named per-step outputs threaded through
-   the DAG (Open Agent Spec / Conductor's model), a checked-off plan file
-   (`ohitslaurence/agent-loop`'s model), or both for different use cases.
+   the pipeline (Open Agent Spec / Conductor's model), a checked-off plan
+   file (`ohitslaurence/agent-loop`'s model), or both for different use
+   cases.
 8. **Session transcripts** — the full conversation/tool-call history for
    agentic steps, kept for audit and possible resumption.
 
@@ -51,9 +68,8 @@ assuming they're in scope.
 - **Typed, addressable step outputs.** Both Open Agent Spec and Conductor
   give every step a declared output schema, referenced by later steps as
   `{{ step_name.output.field }}`. This is really a prerequisite for #7
-  (state tracking) and for the DAG itself — without it, "parallel branches"
-  and "mix of agentic/deterministic steps" have no clean way to pass data
-  between steps.
+  (state tracking) and for the pipeline itself — without it, "mix of
+  agentic/deterministic steps" has no clean way to pass data between steps.
 - **Tools and model as independent axes from the agent's identity.**
   Patterns.md's "Agent and tool wiring" section found three different
   answers here (Open Agent Spec: per-task `tools:`; Conductor: workflow +

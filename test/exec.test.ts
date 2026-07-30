@@ -68,7 +68,7 @@ function withNoPath<T> (fn: () => T): T {
 }
 
 describe('runWish', () => {
-  it('runs steps in dependency order, threading output through templating', () => {
+  it('runs steps in document order, threading output through templating', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wish-exec-'))
     const file = join(dir, 'out.txt')
     try {
@@ -76,15 +76,14 @@ describe('runWish', () => {
         wish: '1',
         name: 't',
         steps: {
-          consume: {
-            needs: ['produce'],
-            type: 'script',
-            run: `printf '%s' '{{ steps.produce.outputs.message }}' > ${file}`,
-          },
           produce: {
             type: 'script',
             run: 'echo \'{"message":"ok"}\'',
             outputs: { message: { type: 'string' } },
+          },
+          consume: {
+            type: 'script',
+            run: `printf '%s' '{{ steps.produce.outputs.message }}' > ${file}`,
           },
         },
       }
@@ -365,7 +364,6 @@ describe('runWish — state persistence', () => {
             outputs: { message: { type: 'string' } },
           },
           print: {
-            needs: ['greet'],
             type: 'script',
             run: 'echo hi',
           },
@@ -396,8 +394,8 @@ describe('runWish — state persistence', () => {
         state: { path: statePath },
         steps: {
           a: { type: 'script', run: 'echo hi' },
-          b: { needs: ['a'], type: 'script', run: 'exit 5' },
-          c: { needs: ['b'], type: 'script', run: 'echo never' },
+          b: { type: 'script', run: 'exit 5' },
+          c: { type: 'script', run: 'echo never' },
         },
       }
 
@@ -457,8 +455,8 @@ describe('runWish — limits', () => {
         state: { path: statePath },
         steps: {
           a: { type: 'script', run: 'echo a' },
-          b: { needs: ['a'], type: 'script', run: 'echo b' },
-          c: { needs: ['b'], type: 'script', run: 'echo c' },
+          b: { type: 'script', run: 'echo b' },
+          c: { type: 'script', run: 'echo c' },
         },
       }
 

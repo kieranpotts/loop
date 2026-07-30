@@ -20,7 +20,6 @@ import { dirname } from 'node:path'
 import { stringify } from 'yaml'
 import type { OutputField, Step, Wish } from './schema.ts'
 import { matchesOutputType } from './schema.ts'
-import { topologicalOrder } from './dag.ts'
 import { parseDuration } from './duration.ts'
 
 export type RunOutcome =
@@ -284,7 +283,10 @@ export function runWish (wish: Wish): RunOutcome {
     }
   }
 
-  const order = topologicalOrder(wish.steps)
+  // `steps` is a sequential pipeline, not a DAG: execution order is document
+  // order — the order the keys were declared in the YAML — no dependency
+  // graph to sort. See docs/design/design.md's design decisions for why.
+  const order = Object.keys(wish.steps)
   const context: TemplateContext = { run: { id: randomUUID() }, steps: {} }
 
   let statePath: string | undefined
