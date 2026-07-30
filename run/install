@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+#
+# Installs `wish` onto PATH.
+#
+# Usage: ./run/install
+#
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "wish: install requires npm, which was not found on PATH." >&2
+  exit 1
+fi
+
+(cd "${repo_root}" && npm install && npm link)
+
+echo "Installed. Run 'wish <name>' from any project with a .agents/wishes/<name>.yaml file."

@@ -9,3 +9,5 @@
 # GitHub provides a collection of useful `.gitignore` templates for a variety of
 # software stacks here: https://github.com/github/gitignore
 #
+
+node_modules/

@@ -1,0 +1,32 @@
+{
+
+  //
+  // Used for type-checking only. See `npm run typecheck`.
+  //
+
+  "compilerOptions": {
+    "noEmit": true,
+
+    // Match how Node loads TS code directly: ESM, NodeNext resolution, and
+    // explicit `.ts` import specifiers (which Node's type stripping requires).
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "lib": ["es2023"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+
+    // Be strict — it's literally the point of a type-checker.
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+
+    // Skip checking declaration files in node_modules.
+    "skipLibCheck": true,
+
+    "types": ["node"]
+  },
+
+  "include": ["src/**/*.ts"]
+
+}

@@ -1,0 +1,21 @@
+{
+  "name": "kieranpotts-loop",
+  "version": "0.0.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kieranpotts/loop.git"
+  },
+  "private": true,
+  "type": "module",
+  "bin": {
+    "wish": "./src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.0",
+    "typescript": "~6.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc"
+  }
+}
