@@ -56,6 +56,7 @@ function main (): void {
     process.exit(1)
   }
 
+  if (outcome.statePath) console.log(`wish: state written to ${outcome.statePath}`)
   console.log(`wish: ${path}: done`)
 }
 

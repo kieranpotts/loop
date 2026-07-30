@@ -1,8 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { parse } from 'yaml'
 import { runWish } from '../src/exec.ts'
 import type { Wish } from '../src/schema.ts'
 
@@ -123,6 +124,112 @@ describe('runWish', () => {
       wish: '1',
       name: 't',
       steps: { a: { type: 'script', run: 'echo {{ steps.missing.outputs.x }}' } },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, false)
+    assert.ok(!outcome.ok && outcome.error.includes('unresolved template reference'))
+  })
+})
+
+describe('runWish — state persistence', () => {
+  it('writes no state file when state is not configured', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      steps: { a: { type: 'script', run: 'echo hi' } },
+    }
+    const outcome = runWish(wish)
+    assert.equal(outcome.ok, true)
+    assert.ok(outcome.ok && outcome.statePath === undefined)
+  })
+
+  it('records each step\'s status and outputs, keyed by run id', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-state-'))
+    try {
+      const wish: Wish = {
+        wish: '1',
+        name: 'pipeline',
+        state: { path: join(dir, '{{ run.id }}', 'state.yaml') },
+        steps: {
+          greet: {
+            type: 'script',
+            run: 'echo \'{"message":"ok"}\'',
+            outputs: { message: { type: 'string' } },
+          },
+          print: {
+            needs: ['greet'],
+            type: 'script',
+            run: 'echo hi',
+          },
+        },
+      }
+
+      const outcome = runWish(wish)
+      assert.equal(outcome.ok, true)
+      assert.ok(outcome.ok && outcome.statePath)
+
+      const state = parse(readFileSync((outcome as { statePath: string }).statePath, 'utf8'))
+      assert.equal(state.run.wish, 'pipeline')
+      assert.equal(typeof state.run.id, 'string')
+      assert.deepEqual(state.steps.greet, { status: 'success', outputs: { message: 'ok' } })
+      assert.deepEqual(state.steps.print, { status: 'success', outputs: {} })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('marks a failed step as failed and unreached steps as pending', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-state-'))
+    try {
+      const statePath = join(dir, 'state.yaml')
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        state: { path: statePath },
+        steps: {
+          a: { type: 'script', run: 'echo hi' },
+          b: { needs: ['a'], type: 'script', run: 'exit 5' },
+          c: { needs: ['b'], type: 'script', run: 'echo never' },
+        },
+      }
+
+      const outcome = runWish(wish)
+      assert.equal(outcome.ok, false)
+
+      const state = parse(readFileSync(statePath, 'utf8'))
+      assert.equal(state.steps.a.status, 'success')
+      assert.equal(state.steps.b.status, 'failed')
+      assert.ok(state.steps.b.error.includes('exit'))
+      assert.deepEqual(state.steps.c, { status: 'pending' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates parent directories for state.path if they do not exist', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wish-state-'))
+    try {
+      const statePath = join(dir, 'nested', 'deeper', 'state.yaml')
+      const wish: Wish = {
+        wish: '1',
+        name: 't',
+        state: { path: statePath },
+        steps: { a: { type: 'script', run: 'echo hi' } },
+      }
+
+      assert.equal(runWish(wish).ok, true)
+      assert.ok(existsSync(statePath))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports an unresolved template reference in state.path before running anything', () => {
+    const wish: Wish = {
+      wish: '1',
+      name: 't',
+      state: { path: '/tmp/{{ nonsense }}/state.yaml' },
+      steps: { a: { type: 'script', run: 'echo hi' } },
     }
     const outcome = runWish(wish)
     assert.equal(outcome.ok, false)

@@ -3,21 +3,36 @@
 // Scope for now: `type: script` steps only, run in dependency order. A wish
 // containing any `type: agent` step is refused up front, cleanly, rather than
 // run partially — agent execution (via `genie`, not the Claude Agent SDK
-// directly) is a later increment. So is `state.path` persistence and
-// `limits` enforcement: both are real, separable pieces of work, not part
-// of "can a DAG of scripts run and pass data to each other."
+// directly) is a later increment. So is `limits` enforcement: a real,
+// separable piece of work, not part of "can a DAG of scripts run and pass
+// data to each other, with progress written to state.path."
 
+import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { stringify } from 'yaml'
 import type { OutputField, Step, Wish } from './schema.ts'
 import { matchesOutputType } from './schema.ts'
 import { topologicalOrder } from './dag.ts'
 
 export type RunOutcome =
-  | { ok: true }
+  | { ok: true, statePath?: string }
   | { ok: false, error: string }
 
 interface TemplateContext {
+  run: { id: string }
   steps: Record<string, { outputs: Record<string, unknown> }>
+}
+
+type StepState =
+  | { status: 'pending' }
+  | { status: 'success', outputs: Record<string, unknown> }
+  | { status: 'failed', error: string }
+
+interface StateDocument {
+  run: { id: string, wish: string }
+  steps: Record<string, StepState>
 }
 
 function isRecord (value: unknown): value is Record<string, unknown> {
@@ -48,6 +63,11 @@ function substitute (text: string, context: TemplateContext): string {
     }
     return typeof value === 'string' ? value : JSON.stringify(value)
   })
+}
+
+function writeState (path: string, state: StateDocument): void {
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, stringify(state))
 }
 
 function runScriptStep (
@@ -116,14 +136,43 @@ export function runWish (wish: Wish): RunOutcome {
   }
 
   const order = topologicalOrder(wish.steps)
-  const context: TemplateContext = { steps: {} }
+  const context: TemplateContext = { run: { id: randomUUID() }, steps: {} }
+
+  let statePath: string | undefined
+  let state: StateDocument | undefined
+
+  if (wish.state) {
+    try {
+      statePath = substitute(wish.state.path, context)
+    } catch (error) {
+      return { ok: false, error: `state.path: ${(error as Error).message}` }
+    }
+    state = {
+      run: { id: context.run.id, wish: wish.name },
+      steps: Object.fromEntries(Object.keys(wish.steps).map(id => [id, { status: 'pending' as const }])),
+    }
+    writeState(statePath, state)
+  }
 
   for (const id of order) {
     const step = wish.steps[id] as Step & { type: 'script' }
     const result = runScriptStep(id, step, context)
-    if (!result.ok) return result
+
+    if (!result.ok) {
+      if (state && statePath) {
+        state.steps[id] = { status: 'failed', error: result.error }
+        writeState(statePath, state)
+      }
+      return result
+    }
+
     context.steps[id] = { outputs: result.outputs }
+
+    if (state && statePath) {
+      state.steps[id] = { status: 'success', outputs: result.outputs }
+      writeState(statePath, state)
+    }
   }
 
-  return { ok: true }
+  return statePath ? { ok: true, statePath } : { ok: true }
 }

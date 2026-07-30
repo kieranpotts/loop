@@ -1,6 +1,9 @@
 wish: "1"
 name: pipeline
 
+state:
+  path: .loop/runs/{{ run.id }}/state.yaml
+
 steps:
   greet:
     type: script
