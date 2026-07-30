@@ -1,0 +1,27 @@
+#
+# Validate commit message formats.
+#
+
+name: Validate Commit Messages
+
+on:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  validate-commit-messages:
+    name: Validate commit messages on all branches
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # Checkout the repository and fetch its full log history.
+      # https://github.com/actions/checkout?tab=readme-ov-file#fetch-all-history-for-all-tags-and-branches
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate new commit messages
+        uses: kieranpotts/actions/validate-commit-messages@latest/dev

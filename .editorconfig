@@ -1,0 +1,38 @@
+#
+# This file helps to enforce a consistent coding style across different editors.
+#
+# Single-line comments, rather than end-of-line comments, are used for
+# compatibility with Neovim!
+#
+# https://editorconfig.org/
+# https://github.com/editorconfig/editorconfig/wiki/editorconfig-properties
+#
+
+# This is the project's root directory.
+root = true
+
+# Defaults for all files.
+[*]
+
+# Files are UTF-8 encoded.
+charset = utf-8
+
+# Files use Unix line endings.
+end_of_line = lf
+
+# Use spaces for indentation.
+indent_style = space
+
+# Each indent should contain two spaces.
+indent_size = 2
+
+# For VCS, end files with an empty line.
+insert_final_newline = true
+
+# Forces hard line wrapping at a max column count. Not universally supported,
+# eg. ignored by VS Code but supported by Zed and JetBrains.
+# Unset to default to using the editor's own settings.
+max_line_length = unset
+
+# No whitespace on the end of lines.
+trim_trailing_whitespace = true
