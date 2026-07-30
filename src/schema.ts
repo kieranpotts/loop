@@ -1,5 +1,5 @@
 // Validates a parsed wish against the MVP field set from
-// docs/design/design.md's "Minimal MVP increment": `loop`/`name`, `steps`
+// docs/design/design.md's "Minimal MVP increment": `wish`/`name`, `steps`
 // with `needs`/`type: agent | script`/`outputs`, `max_steps`/`until`,
 // workflow-wide `limits`, and `state.path`. Everything else the full schema
 // proposes (`if`, `human_gate`, `strategy.matrix`, `retry`, agent/tool
@@ -41,7 +41,7 @@ export interface State {
 }
 
 export interface Wish {
-  loop: string
+  wish: string
   name: string
   limits?: Limits
   state?: State
@@ -54,6 +54,7 @@ export type ValidationResult =
 
 const STEP_TYPES = ['agent', 'script'] as const
 const OUTPUT_TYPES = ['string', 'number', 'boolean', 'array', 'object'] as const
+const DEFAULT_SCHEMA_VERSION = '1'
 
 function isRecord (value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -156,7 +157,9 @@ export function validateWish (value: unknown): ValidationResult {
     return { ok: false, errors: ['must be a YAML mapping'] }
   }
 
-  if (!isNonEmptyString(value.loop)) errors.push("loop: required (schema version, e.g. '1')")
+  if (value.wish !== undefined && !isNonEmptyString(value.wish)) {
+    errors.push(`wish: must be a non-empty string, e.g. '${DEFAULT_SCHEMA_VERSION}'`)
+  }
   if (!isNonEmptyString(value.name)) errors.push('name: required')
 
   if (value.limits !== undefined) {
@@ -198,5 +201,10 @@ export function validateWish (value: unknown): ValidationResult {
 
   if (errors.length > 0) return { ok: false, errors }
 
-  return { ok: true, errors: [], wish: value as unknown as Wish }
+  const wish: Wish = {
+    ...value,
+    wish: isNonEmptyString(value.wish) ? value.wish : DEFAULT_SCHEMA_VERSION,
+  } as unknown as Wish
+
+  return { ok: true, errors: [], wish }
 }

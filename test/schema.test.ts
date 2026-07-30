@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { validateWish } from '../src/schema.ts'
 
 const validWish = {
-  loop: '1',
+  wish: '1',
   name: 'fix-and-verify',
   limits: { max_turns: 200, timeout: '45m', budget_usd: 10 },
   state: { path: '.loop/runs/{{ run.id }}/state.yaml' },
@@ -32,9 +32,9 @@ describe('validateWish — the MVP example from design.md', () => {
     assert.equal(result.ok, true)
   })
 
-  it('accepts a minimal wish with only loop, name and one script step', () => {
+  it('accepts a minimal wish with only wish, name and one script step', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'hello',
       steps: { greet: { type: 'script', run: 'echo hi' } },
     })
@@ -49,15 +49,44 @@ describe('validateWish — top-level fields', () => {
     assert.ok(!result.ok && result.errors.includes('must be a YAML mapping'))
   })
 
-  it('requires loop and name', () => {
+  it('requires name, but not wish', () => {
     const result = validateWish({ steps: { a: { type: 'script', run: 'x' } } })
     assert.equal(result.ok, false)
-    assert.ok(!result.ok && result.errors.some(e => e.startsWith('loop:')))
     assert.ok(!result.ok && result.errors.some(e => e.startsWith('name:')))
+    assert.ok(!result.ok && !result.errors.some(e => e.startsWith('wish:')))
+  })
+
+  it('defaults wish to \'1\' when absent', () => {
+    const result = validateWish({
+      name: 'x',
+      steps: { a: { type: 'script', run: 'echo hi' } },
+    })
+    assert.equal(result.ok, true)
+    assert.ok(result.ok && result.wish.wish === '1')
+  })
+
+  it('keeps an explicit wish value rather than overriding it', () => {
+    const result = validateWish({
+      wish: '2',
+      name: 'x',
+      steps: { a: { type: 'script', run: 'echo hi' } },
+    })
+    assert.equal(result.ok, true)
+    assert.ok(result.ok && result.wish.wish === '2')
+  })
+
+  it('rejects a wish value that is not a non-empty string', () => {
+    const result = validateWish({
+      wish: 1,
+      name: 'x',
+      steps: { a: { type: 'script', run: 'echo hi' } },
+    })
+    assert.equal(result.ok, false)
+    assert.ok(!result.ok && result.errors.some(e => e.startsWith('wish:')))
   })
 
   it('requires steps to be a non-empty object', () => {
-    const result = validateWish({ loop: '1', name: 'x', steps: {} })
+    const result = validateWish({ wish: '1', name: 'x', steps: {} })
     assert.equal(result.ok, false)
     assert.ok(!result.ok && result.errors.includes('steps: required, must be a non-empty object'))
   })
@@ -66,7 +95,7 @@ describe('validateWish — top-level fields', () => {
 describe('validateWish — limits', () => {
   it('rejects a non-positive-integer max_turns', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       limits: { max_turns: 0 },
       steps: { a: { type: 'script', run: 'x' } },
@@ -77,7 +106,7 @@ describe('validateWish — limits', () => {
 
   it('rejects a negative budget_usd', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       limits: { budget_usd: -1 },
       steps: { a: { type: 'script', run: 'x' } },
@@ -90,7 +119,7 @@ describe('validateWish — limits', () => {
 describe('validateWish — state', () => {
   it('requires state.path when state is set', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       state: {},
       steps: { a: { type: 'script', run: 'x' } },
@@ -103,7 +132,7 @@ describe('validateWish — state', () => {
 describe('validateWish — step.needs', () => {
   it('rejects a needs entry that names an unknown step', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { needs: ['missing'], type: 'script', run: 'x' } },
     })
@@ -113,7 +142,7 @@ describe('validateWish — step.needs', () => {
 
   it('rejects a two-step cycle', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: {
         a: { needs: ['b'], type: 'script', run: 'x' },
@@ -126,7 +155,7 @@ describe('validateWish — step.needs', () => {
 
   it('accepts a diamond dependency shape (not a cycle)', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: {
         a: { type: 'script', run: 'x' },
@@ -142,7 +171,7 @@ describe('validateWish — step.needs', () => {
 describe('validateWish — step.type', () => {
   it('rejects an unknown step type', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'human_gate' } },
     })
@@ -152,7 +181,7 @@ describe('validateWish — step.type', () => {
 
   it('requires model and prompt on an agent step, and rejects run', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'agent', run: 'echo hi' } },
     })
@@ -164,7 +193,7 @@ describe('validateWish — step.type', () => {
 
   it('requires run on a script step, and rejects agent-only fields', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'script', model: 'claude-sonnet-5', prompt: 'hi' } },
     })
@@ -176,7 +205,7 @@ describe('validateWish — step.type', () => {
 
   it('rejects a non-positive-integer max_steps', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'agent', model: 'm', prompt: 'p', max_steps: 0 } },
     })
@@ -188,7 +217,7 @@ describe('validateWish — step.type', () => {
 describe('validateWish — step.outputs', () => {
   it('accepts a step with no outputs at all', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'script', run: 'x' } },
     })
@@ -197,7 +226,7 @@ describe('validateWish — step.outputs', () => {
 
   it('rejects an output field missing a type', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'script', run: 'x', outputs: { field: {} } } },
     })
@@ -207,7 +236,7 @@ describe('validateWish — step.outputs', () => {
 
   it('rejects an output field with an unrecognised type', () => {
     const result = validateWish({
-      loop: '1',
+      wish: '1',
       name: 'x',
       steps: { a: { type: 'script', run: 'x', outputs: { field: { type: 'date' } } } },
     })

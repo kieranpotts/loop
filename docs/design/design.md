@@ -54,7 +54,7 @@ because a concrete design has to commit to something:
 ## Full example
 
 ```yaml
-loop: "1"
+wish: "1"
 name: fix-and-verify
 description: >
   Investigate a failing test suite, fix it, get human sign-off, then
@@ -183,7 +183,7 @@ hooks:
 
 | Field | Purpose | Inspiration |
 |---|---|---|
-| `loop` | Schema version | Taskflow's `version:` header |
+| `wish` | Schema version, optional (defaults to `"1"`) | Self-named, like OpenAPI's `openapi:` field and Kubernetes' `apiVersion:` — not bare `version:`, which risks reading as "version of this particular wish" rather than "version of the schema dialect" |
 | `name`, `description` | Identity | All sources |
 | `on` | Trigger (manual, schedule, …) | GitHub Actions `on:` |
 | `limits` | Workflow-wide turn cap, wall-clock timeout, cost cap | Conductor `limits:` |
@@ -319,7 +319,7 @@ involved in a run.
 
 **MVP field set:**
 
-- `loop`, `name` — identity
+- `wish` (optional, defaults to `"1"`), `name` — identity
 - `steps.<id>.needs` — the DAG, no `if:` (branching deferred)
 - `steps.<id>.type: agent | script` — only these two step types
 - `steps.<id>.model` / `prompt` / `tools` — inlined directly on the step; no
@@ -335,7 +335,7 @@ involved in a run.
 - `state.path` — resumable run-state file
 
 ```yaml
-loop: "1"
+wish: "1"
 name: fix-and-verify
 
 limits:
@@ -378,7 +378,7 @@ steps:
 | `context.mode` | `accumulate` is a reasonable fixed default until context-cost becomes an actual problem |
 | `hooks` | Observability beyond the state file and transcripts can wait until something is consuming those events |
 | `transcripts:` (as configurable YAML) | Ship with transcripts always-on, unconfigurable, at a fixed path — configurability isn't needed until there's a reason to turn them off |
-| `on:` triggers | A CLI invocation (`loop run workflow.yaml`) is sufficient before scheduling/webhooks are needed |
+| `on:` triggers | A CLI invocation (`wish <name>`) is sufficient before scheduling/webhooks are needed |
 
 **Suggested sequencing** after MVP: `if:` + `type: human_gate` next (the
 two cheapest, most-requested additions), then `strategy.matrix`, then

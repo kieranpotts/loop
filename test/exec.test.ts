@@ -12,7 +12,7 @@ describe('runWish', () => {
     const file = join(dir, 'out.txt')
     try {
       const wish: Wish = {
-        loop: '1',
+        wish: '1',
         name: 't',
         steps: {
           consume: {
@@ -38,7 +38,7 @@ describe('runWish', () => {
 
   it('succeeds for a step with no declared outputs (stdout streams through)', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: { a: { type: 'script', run: 'echo hi' } },
     }
@@ -47,7 +47,7 @@ describe('runWish', () => {
 
   it('refuses to run a wish containing a type: agent step', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: { a: { type: 'agent', model: 'm', prompt: 'p' } },
     }
@@ -58,7 +58,7 @@ describe('runWish', () => {
 
   it('reports a nonzero exit status', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: { a: { type: 'script', run: 'exit 7' } },
     }
@@ -69,7 +69,7 @@ describe('runWish', () => {
 
   it('rejects non-JSON stdout when outputs are declared', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: {
         a: {
@@ -86,7 +86,7 @@ describe('runWish', () => {
 
   it('rejects stdout missing a declared output field', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: {
         a: {
@@ -103,7 +103,7 @@ describe('runWish', () => {
 
   it('rejects stdout whose output field has the wrong type', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: {
         a: {
@@ -120,7 +120,7 @@ describe('runWish', () => {
 
   it('reports an unresolved template reference', () => {
     const wish: Wish = {
-      loop: '1',
+      wish: '1',
       name: 't',
       steps: { a: { type: 'script', run: 'echo {{ steps.missing.outputs.x }}' } },
     }

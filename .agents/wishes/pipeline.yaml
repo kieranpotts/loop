@@ -1,4 +1,4 @@
-loop: "1"
+wish: "1"
 name: pipeline
 
 steps:
@@ -8,7 +8,7 @@ steps:
     outputs:
       message: { type: string }
 
-  echo_it:
+  print:
     needs: [greet]
     type: script
     run: 'echo "greet said: {{ steps.greet.outputs.message }}"'
