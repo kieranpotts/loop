@@ -14,31 +14,32 @@ SHOULD NOT, OPTIONAL, and MAY are to be interpreted as described in
 
 ## Project structure
 
-- **`src/`**: Application source.
+- `src/`. Application source.
 
-- **`tests/`**: Automated tests (unit, integration, system).
+- `tests/`. Automated tests (unit, integration, system).
 
-- **`run/`**: Dev tools (Bash scripts).
+- `run/`. Dev tools (Bash scripts).
 
-- **`docs/`**: Developer/maintainer docs, including architectural decision records.
+- `docs/`. Developer/maintainer docs, including architectural decision
+  records.
 
-- **`skills/`**: On-demand context for agents.
+- `skills/`. On-demand context for agents.
 
 ## Tools
 
-- **`command`** to build production-grade artifacts.
+- `command` to build production-grade artifacts.
 
-- **`command`** for linting.
+- `command` for linting.
 
-- **`command`** for testing.
+- `command` for testing.
 
 ## Documentation
 
-- **Audit reports**:
+- **Audit reports.** \
   ./docs/audits/ (mono-repo)
   https://github.com/kieranpotts/audits (multi-repo)
 
-- **Design docs**:
+- **Design docs.** \
   ./docs/design/ (mono-repo)
   https://github.com/kieranpotts/design (multi-repo)
 
@@ -52,14 +53,14 @@ SHOULD NOT, OPTIONAL, and MAY are to be interpreted as described in
 
 ## Skills
 
-- **`./skills/release/SKILL.md`**:
+- `./skills/release/SKILL.md`. \
   Checklist for cutting a release.
 
-- **`./skills/migration/SKILL.md`**:
+- `./skills/migration/SKILL.md`. \
   Guidance for writing database migrations.
 
-- **`../skills/code-review/SKILL.md`**:
+- `../skills/code-review/SKILL.md`. \
   Generic code review checklist.
 
-- **<https://example.com/standards/api-design/tree/main/SKILL.md>**:
+- <https://example.com/standards/api-design/tree/main/SKILL.md>. \
   API design conventions.
