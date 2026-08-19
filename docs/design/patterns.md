@@ -5,7 +5,9 @@ Primary sources: [Open Agent Spec](https://www.openagentspec.dev/),
 [GitHub Security Lab's Taskflow Agent](https://github.com/GitHubSecurityLab/seclab-taskflow-agent) —
 three YAML-first agent/workflow definition formats. [`ohitslaurence/agent-loop`](https://github.com/ohitslaurence/agent-loop)
 is referenced as a secondary contrast point: a much simpler, code-free,
-Markdown-plan-driven loop.
+Markdown-plan-driven loop. [`cobusgreyling/loop-engineering`](https://github.com/cobusgreyling/loop-engineering/tree/main)
+is a further secondary reference, of a different kind again — see "Operational
+loop patterns" below.
 
 ## Workflow-graph state (per-step outputs, DAG-shaped)
 
@@ -236,6 +238,28 @@ explicitly whether Loop's YAML should declare hooks the way Conductor does,
 or whether observability belongs entirely to the harness that executes the
 YAML (closer to how `ohitslaurence/agent-loop` handles it).
 
+## Operational loop patterns
+
+[`cobusgreyling/loop-engineering`](https://github.com/cobusgreyling/loop-engineering/tree/main)
+is a different kind of reference than the three focus sources above: it isn't
+a YAML workflow-definition format at all, but a collection of named,
+production loop *patterns* (Daily Triage, PR Babysitter, CI Sweeper, and
+others, indexed in `patterns/registry.yaml`), starter kits per coding agent
+(Claude Code, Codex, Grok, Opencode), and CLI tooling for loop governance —
+`loop-init` to scaffold a new loop, `loop-audit` for a readiness score,
+`loop-cost` for spend tracking, `loop-gate` for approval gates. It publishes
+no formal schema for a loop definition; instead it generates plain governance
+documents (`STATE.md`, `LOOP.md`, `loop-constraints.md`, `loop-budget.md`,
+`loop-run-log.md`) that track what a loop is allowed to do and what it has
+done.
+
+**Takeaway for design**: this repo's value to Loop isn't schema shape — it
+has none to borrow — but its pattern library and governance-document set are
+worth returning to once Loop has a working MVP, as a check on whether real
+recurring use cases (a daily triage loop, a PR babysitter) are actually
+expressible in Loop's YAML, and whether `state.path` and `limits:` cover the
+same ground as its `STATE.md`/`loop-budget.md`/`loop-run-log.md` split.
+
 -----
 
 ## Cross-reference summary
@@ -261,3 +285,4 @@ YAML (closer to how `ohitslaurence/agent-loop` handles it).
   [parallel-execution.md](https://github.com/microsoft/conductor/blob/main/docs/parallel-execution.md)
 - [GitHubSecurityLab/seclab-taskflow-agent](https://github.com/GitHubSecurityLab/seclab-taskflow-agent)
 - [`ohitslaurence/agent-loop`](https://github.com/ohitslaurence/agent-loop)
+- [`cobusgreyling/loop-engineering`](https://github.com/cobusgreyling/loop-engineering/tree/main)

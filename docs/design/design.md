@@ -333,6 +333,7 @@ genuinely independent in the sources this schema draws from.
   [parallel-execution.md](https://github.com/microsoft/conductor/blob/main/docs/parallel-execution.md)
 - [GitHubSecurityLab/seclab-taskflow-agent](https://github.com/GitHubSecurityLab/seclab-taskflow-agent)
 - [`ohitslaurence/agent-loop`](https://github.com/ohitslaurence/agent-loop)
+- [`cobusgreyling/loop-engineering`](https://github.com/cobusgreyling/loop-engineering/tree/main)
 - [GitHub Actions workflow syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
 
 ## Minimal MVP increment
