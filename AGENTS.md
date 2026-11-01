@@ -27,11 +27,18 @@ SHOULD NOT, OPTIONAL, and MAY are to be interpreted as described in
 
 ## Tools
 
-- `command` to build production-grade artifacts.
+- `./run/install` to install the dependencies (`npm install`) and link
+  `wish` onto `PATH` (`npm link`). Run it by hand before the scripts below,
+  on the host or in the workspace devcontainer.
 
-- `command` for linting.
+- `./run/lint` and `./run/fix` to lint and auto-fix with ESLint.
 
-- `command` for testing.
+- `./run/typecheck` to type-check with `tsc --noEmit`.
+
+- `./run/test` to run the test suite with Node's built-in test runner.
+
+- `./run/check` to run the linter, then the type-check, then the tests. Run
+  it before committing.
 
 ## Documentation
 

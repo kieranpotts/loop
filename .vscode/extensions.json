@@ -1,8 +1,6 @@
 {
   "recommendations": [
 
-    /* Keep this list synchronized with `../.devcontainer/devcontainer.json`. */
-
     /* AsciiDoc — Provides language support for AsciiDoc. */
     "asciidoctor.asciidoctor-vscode",
 
